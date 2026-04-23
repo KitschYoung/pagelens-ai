@@ -19,9 +19,26 @@ const DEFAULT_SETTINGS = {
 };
 
 const STORAGE_KEYS = {
-    sessions: 'webchat_sessions_v3',
-    pendingLogs: 'webchat_pending_logs_v1'
+    sessions: 'webchat_sessions_v5',
+    pendingLogs: 'webchat_pending_logs_v2',
+    domainModePrefs: 'webchat_domain_mode_prefs_v1'
 };
+
+// 按域名记忆的默认会话模式：{ [domain]: chatMode }
+let domainModePrefs = {};
+
+// 加载共享的会话模式定义（供 importScripts 引入）
+try {
+    importScripts('shared/chatModes.js');
+} catch (e) {
+    console.error('加载 shared/chatModes.js 失败:', e);
+}
+
+const {
+    CHAT_MODES,
+    DEFAULT_CHAT_MODE,
+    CHAT_MODE_META: SHARED_CHAT_MODE_META
+} = self.WebChatModes;
 
 const runtimePorts = {};
 const runtimeControllers = {};
@@ -33,6 +50,20 @@ let saveStateTimer = null;
 chrome.runtime.onInstalled.addListener(() => {
     console.log('扩展已安装');
 });
+
+// 全局快捷键：Cmd/Ctrl+Shift+K 切换侧边面板
+if (chrome.commands && chrome.commands.onCommand) {
+    chrome.commands.onCommand.addListener(async (command) => {
+        if (command !== 'toggle-panel') return;
+        try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab || typeof tab.id !== 'number') return;
+            await chrome.tabs.sendMessage(tab.id, { action: 'togglePanel' }).catch(() => { /* 页面不受支持 */ });
+        } catch (e) {
+            console.warn('toggle-panel 快捷键触发失败:', e);
+        }
+    });
+}
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     void handleRuntimeMessage(request, sender)
@@ -93,9 +124,7 @@ async function handleRuntimeMessage(request, sender) {
     const { action } = request;
 
     if (action === 'getHistory') {
-        await rotateSessionIfPageChanged(request.tabId);
-        const session = getSession(request.tabId);
-        return buildHistoryResponse(session);
+        return await getHistoryForTab(request.tabId);
     }
 
     if (action === 'prepareGeneration') {
@@ -104,6 +133,10 @@ async function handleRuntimeMessage(request, sender) {
 
     if (action === 'stopGeneration') {
         return await stopGeneration(request.tabId, request.reason || 'manual-stop');
+    }
+
+    if (action === 'setChatMode') {
+        return await setChatMode(request.tabId, request.chatMode);
     }
 
     if (action === 'clearHistory') {
@@ -161,16 +194,59 @@ async function handlePortMessage(port, request) {
 
 async function ensureStateLoaded() {
     if (!stateLoadedPromise) {
-        stateLoadedPromise = chrome.storage.local.get({
-            [STORAGE_KEYS.sessions]: {},
-            [STORAGE_KEYS.pendingLogs]: {}
-        }).then((items) => {
-            sessionsState = normalizeSessions(items[STORAGE_KEYS.sessions] || {});
-            pendingLogsState = items[STORAGE_KEYS.pendingLogs] || {};
+        stateLoadedPromise = Promise.all([
+            chrome.storage.local.get({
+                [STORAGE_KEYS.sessions]: {},
+                [STORAGE_KEYS.pendingLogs]: {}
+            }),
+            chrome.storage.sync.get({
+                [STORAGE_KEYS.domainModePrefs]: {}
+            }).catch(() => ({ [STORAGE_KEYS.domainModePrefs]: {} }))
+        ]).then(([localItems, syncItems]) => {
+            sessionsState = normalizeSessions(localItems[STORAGE_KEYS.sessions] || {});
+            pendingLogsState = localItems[STORAGE_KEYS.pendingLogs] || {};
+            domainModePrefs = normalizeDomainModePrefs(syncItems[STORAGE_KEYS.domainModePrefs] || {});
         });
     }
 
     await stateLoadedPromise;
+}
+
+function normalizeDomainModePrefs(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    for (const [domain, mode] of Object.entries(raw)) {
+        if (typeof domain === 'string' && domain) {
+            out[domain.toLowerCase()] = normalizeChatMode(mode);
+        }
+    }
+    return out;
+}
+
+function getDomainDefaultMode(domain) {
+    if (!domain) return null;
+    const key = String(domain).toLowerCase();
+    return domainModePrefs[key] || null;
+}
+
+function resolveInitialChatMode(tabInfo) {
+    const pref = getDomainDefaultMode(tabInfo?.pageDomain);
+    return normalizeChatMode(pref || DEFAULT_CHAT_MODE);
+}
+
+async function rememberDomainMode(domain, chatMode) {
+    if (!domain) return;
+    const key = String(domain).toLowerCase();
+    const normalized = normalizeChatMode(chatMode);
+    if (domainModePrefs[key] === normalized) return;
+    domainModePrefs[key] = normalized;
+    try {
+        await chrome.storage.sync.set({
+            [STORAGE_KEYS.domainModePrefs]: domainModePrefs
+        });
+    } catch (e) {
+        console.warn('保存域名会话模式偏好失败:', e);
+    }
 }
 
 function normalizeSessions(rawSessions) {
@@ -197,15 +273,20 @@ function normalizeSession(session = {}) {
             pageContentLength: session.sessionMeta?.pageContentLength || 0,
             outputFilePath: session.sessionMeta?.outputFilePath || '',
             lastRotationReason: session.sessionMeta?.lastRotationReason || '',
-            lastRecoveryReason: session.sessionMeta?.lastRecoveryReason || ''
+            lastRecoveryReason: session.sessionMeta?.lastRecoveryReason || '',
+            currentChatMode: normalizeChatMode(session.sessionMeta?.currentChatMode),
+            isFinalizing: Boolean(session.sessionMeta?.isFinalizing)
         },
         history: normalizeHistory(session.history || []),
+        turns: normalizeTurns(session.turns || []),
         generatingState: {
             isGenerating: Boolean(session.generatingState?.isGenerating),
             pendingQuestion: session.generatingState?.pendingQuestion || '',
             requestId: session.generatingState?.requestId || '',
+            turnId: session.generatingState?.turnId || '',
             clientId: session.generatingState?.clientId || '',
-            startedAt: session.generatingState?.startedAt || ''
+            startedAt: session.generatingState?.startedAt || '',
+            chatMode: normalizeChatMode(session.generatingState?.chatMode)
         },
         currentAnswer: session.currentAnswer || '',
         completedAnswer: session.completedAnswer || '',
@@ -218,12 +299,46 @@ function normalizeSession(session = {}) {
 
 function normalizeHistory(history = []) {
     return history.map((message) => ({
+        turnId: message.turnId || '',
         content: message.content || '',
         markdownContent: message.markdownContent || message.content || '',
         isUser: Boolean(message.isUser),
         createdAt: message.createdAt || new Date().toISOString()
     }));
 }
+
+function normalizeTurns(turns = []) {
+    return turns.map((turn) => ({
+        turnId: turn.turnId || createTurnId(),
+        requestId: turn.requestId || '',
+        createdAt: turn.createdAt || new Date().toISOString(),
+        chatMode: normalizeChatMode(turn.chatMode),
+        usesPageContext: Boolean(turn.usesPageContext),
+        shouldPersist: Boolean(turn.shouldPersist),
+        pageSnapshot: normalizePageSnapshot(turn.pageSnapshot),
+        question: turn.question || '',
+        answer: turn.answer || '',
+        status: turn.status || 'completed',
+        errorMessage: turn.errorMessage || ''
+    }));
+}
+
+function normalizePageSnapshot(snapshot) {
+    if (!snapshot) {
+        return null;
+    }
+
+    return {
+        title: snapshot.title || '',
+        url: snapshot.url || '',
+        domain: snapshot.domain || '',
+        excerpt: snapshot.excerpt || '',
+        contentLength: snapshot.contentLength || 0
+    };
+}
+
+// 使用 shared/chatModes.js 里的定义（避免和前端漂移）
+const normalizeChatMode = self.WebChatModes.normalizeChatMode;
 
 function getSession(tabId) {
     return sessionsState[String(tabId)] || null;
@@ -273,20 +388,18 @@ async function flushPersistentState() {
 async function recoverInterruptedSessions() {
     let changed = false;
 
-    for (const [tabId, session] of Object.entries(sessionsState)) {
-        if (!session.generatingState.isGenerating) {
+    for (const session of Object.values(sessionsState)) {
+        if (!session.generatingState.isGenerating || session.sessionMeta.isFinalizing) {
             continue;
         }
 
-        if (runtimeControllers[tabId]) {
+        const runtimeController = runtimeControllers[session.sessionMeta.sessionId];
+        if (runtimeController) {
             continue;
         }
 
-        if (session.currentAnswer) {
-            session.history.push(createMessage(session.currentAnswer, false));
-            session.completedAnswer = session.currentAnswer;
-        }
-
+        materializeCurrentAnswer(session);
+        finalizeTurn(session, session.generatingState.turnId, session.currentAnswer, 'stopped', '');
         session.generatingState = createIdleGeneratingState();
         session.sessionMeta.updatedAt = new Date().toISOString();
         session.sessionMeta.lastRecoveryReason = 'service-worker-restart';
@@ -296,6 +409,23 @@ async function recoverInterruptedSessions() {
     if (changed) {
         await flushPersistentState();
     }
+}
+
+async function getHistoryForTab(tabId) {
+    let session = getSession(tabId);
+
+    if (session) {
+        const rotated = await rotateSessionIfNeeded(tabId, false);
+        session = rotated || getSession(tabId);
+    }
+
+    if (!session) {
+        const tabInfo = await getTabSnapshot(tabId);
+        session = createSession(tabInfo, resolveInitialChatMode(tabInfo));
+        await saveSession(tabId, session, true);
+    }
+
+    return buildHistoryResponse(session);
 }
 
 async function prepareGeneration(tabId, pageContent, question) {
@@ -309,28 +439,34 @@ async function prepareGeneration(tabId, pageContent, question) {
     if (session) {
         const rotationReason = getRotationReason(session, tabInfo, settings, true);
         if (rotationReason) {
+            const nextChatMode = session.sessionMeta.currentChatMode;
             await finalizeAndClearSession(tabId, rotationReason);
-            session = null;
+            session = createSession(tabInfo, nextChatMode);
             sessionReset = true;
+            await saveSession(tabId, session, true);
         }
     }
 
     if (session?.generatingState.isGenerating) {
         return {
             status: 'busy',
-            error: '当前标签已有生成中的回复，请等待完成后再提问。'
+            error: '当前标签已有生成中的回复，请等待完成后再提问。',
+            chatMode: session.sessionMeta.currentChatMode,
+            usesPageContext: modeUsesPageContext(session.sessionMeta.currentChatMode)
         };
     }
 
     if (session?.reservation.requestId && !isReservationExpired(session.reservation)) {
         return {
             status: 'busy',
-            error: '当前标签已有待开始的请求，请稍后重试。'
+            error: '当前标签已有待开始的请求，请稍后重试。',
+            chatMode: session.sessionMeta.currentChatMode,
+            usesPageContext: modeUsesPageContext(session.sessionMeta.currentChatMode)
         };
     }
 
     if (!session) {
-        session = createSession(tabInfo);
+        session = createSession(tabInfo, resolveInitialChatMode(tabInfo));
     } else {
         updateSessionPageInfo(session, tabInfo);
     }
@@ -339,7 +475,7 @@ async function prepareGeneration(tabId, pageContent, question) {
         requestId: createRequestId(),
         createdAt: new Date().toISOString()
     };
-    session.sessionMeta.updatedAt = new Date().toISOString();
+    touchSession(session);
     await saveSession(tabId, session, true);
 
     return {
@@ -347,7 +483,33 @@ async function prepareGeneration(tabId, pageContent, question) {
         requestId: session.reservation.requestId,
         sessionReset,
         sessionId: session.sessionMeta.sessionId,
-        question
+        question,
+        chatMode: session.sessionMeta.currentChatMode,
+        usesPageContext: modeUsesPageContext(session.sessionMeta.currentChatMode)
+    };
+}
+
+async function setChatMode(tabId, chatMode) {
+    const normalizedMode = normalizeChatMode(chatMode);
+    const tabInfo = await getTabSnapshot(tabId);
+    let session = getSession(tabId);
+
+    if (!session) {
+        session = createSession(tabInfo, normalizedMode);
+    } else {
+        session.sessionMeta.currentChatMode = normalizedMode;
+        updateSessionPageInfo(session, tabInfo);
+        touchSession(session);
+    }
+
+    await saveSession(tabId, session, true);
+    // 记住当前域名默认模式，下次同域名新开标签会自动应用
+    void rememberDomainMode(tabInfo?.pageDomain, normalizedMode);
+    broadcastChatModeUpdate(tabId, normalizedMode, 'chat-mode-changed');
+
+    return {
+        status: 'ok',
+        chatMode: normalizedMode
     };
 }
 
@@ -357,7 +519,8 @@ async function startGenerationFromPort(port, request) {
     await flushPendingLogs(settings);
 
     let session = getSession(tabId);
-    const tabInfo = await getTabSnapshot(tabId, request.pageContent || '');
+    const pageContent = request.pageContent || '';
+    const tabInfo = await getTabSnapshot(tabId, pageContent);
 
     if (!session) {
         sendDirectMessage(port, {
@@ -369,10 +532,14 @@ async function startGenerationFromPort(port, request) {
 
     const rotationReason = getRotationReason(session, tabInfo, settings, true);
     if (rotationReason) {
+        const nextChatMode = session.sessionMeta.currentChatMode;
         await finalizeAndClearSession(tabId, rotationReason);
+        const nextSession = createSession(tabInfo, nextChatMode);
+        await saveSession(tabId, nextSession, true);
         sendDirectMessage(port, {
             type: 'session-reset',
-            reason: rotationReason
+            reason: rotationReason,
+            chatMode: nextChatMode
         });
         sendDirectMessage(port, {
             type: 'error',
@@ -407,15 +574,37 @@ async function startGenerationFromPort(port, request) {
     }
 
     updateSessionPageInfo(session, tabInfo);
-    session.history.push(createMessage(question, true));
+
+    const chatMode = session.sessionMeta.currentChatMode;
+    const usesPageContext = modeUsesPageContext(chatMode);
+    const shouldPersist = modeShouldPersist(chatMode);
+    const turnId = createTurnId();
+    const pageSnapshot = usesPageContext ? createPageSnapshot(tabInfo) : null;
+
+    session.turns.push({
+        turnId,
+        requestId: request.requestId,
+        createdAt: new Date().toISOString(),
+        chatMode,
+        usesPageContext,
+        shouldPersist,
+        pageSnapshot,
+        question,
+        answer: '',
+        status: 'generating',
+        errorMessage: ''
+    });
+    session.history.push(createMessage(question, true, turnId));
     session.currentAnswer = '';
     session.completedAnswer = '';
     session.generatingState = {
         isGenerating: true,
         pendingQuestion: question,
         requestId: request.requestId,
+        turnId,
         clientId: request.clientId || '',
-        startedAt: new Date().toISOString()
+        startedAt: new Date().toISOString(),
+        chatMode
     };
     session.reservation = { requestId: '', createdAt: '' };
     touchSession(session);
@@ -424,12 +613,13 @@ async function startGenerationFromPort(port, request) {
     if (request.sessionReset) {
         broadcastToTab(tabId, {
             type: 'session-reset',
-            reason: 'new-session'
+            reason: 'new-session',
+            chatMode
         });
     }
 
     await persistSessionLog(tabId, 'question-added', settings);
-    await handleAnswerGeneration(tabId, request.pageContent || '', question, settings);
+    await handleAnswerGeneration(tabId, question, pageContent, settings);
 }
 
 async function reconnectStream(port, request) {
@@ -464,17 +654,23 @@ async function reconnectStream(port, request) {
     sendDirectMessage(port, { type: 'answer-end' });
 }
 
-async function handleAnswerGeneration(tabId, pageContent, question, settings) {
+async function handleAnswerGeneration(tabId, question, pageContent, settings) {
     const session = getSession(tabId);
     if (!session) {
         return;
     }
 
+    const turnId = session.generatingState.turnId;
+    const turn = getTurnById(session, turnId);
+    if (!turn) {
+        return;
+    }
+
     const abortController = new AbortController();
-    runtimeControllers[String(tabId)] = abortController;
+    runtimeControllers[session.sessionMeta.sessionId] = abortController;
 
     try {
-        const messages = buildMessagesForRequest(session, settings, pageContent, question);
+        const { requestMessages, promptContent } = buildMessagesForRequest(session, settings, question, pageContent, turn);
         const model = settings[`${settings.apiType}_model`];
         const apiKey = settings[`${settings.apiType}_apiKey`];
         const apiBase = settings[`${settings.apiType}_apiBase`];
@@ -491,7 +687,7 @@ async function handleAnswerGeneration(tabId, pageContent, question, settings) {
             throw new Error('请先在设置页填写API密钥');
         }
 
-        const requestBody = buildRequestBody(settings, model, messages);
+        const requestBody = buildRequestBody(settings, model, requestMessages);
         const headers = {
             'Content-Type': 'application/json'
         };
@@ -512,7 +708,7 @@ async function handleAnswerGeneration(tabId, pageContent, question, settings) {
             throw new Error(errorText || 'API请求失败');
         }
 
-        const inputTokens = Math.ceil((settings.systemPrompt.length + pageContent.length + question.length) / 4);
+        const inputTokens = Math.ceil((settings.systemPrompt.length + promptContent.length) / 4);
         broadcastToTab(tabId, {
             type: 'input-tokens',
             tokens: inputTokens
@@ -564,7 +760,11 @@ async function handleAnswerGeneration(tabId, pageContent, question, settings) {
             touchSession(session);
         }
 
-        session.history.push(createMessage(accumulatedResponse, false));
+        if (accumulatedResponse) {
+            session.history.push(createMessage(accumulatedResponse, false, turnId));
+        }
+
+        finalizeTurn(session, turnId, accumulatedResponse, 'completed', '');
         session.completedAnswer = accumulatedResponse;
         session.currentAnswer = accumulatedResponse;
         session.generatingState = createIdleGeneratingState();
@@ -575,12 +775,17 @@ async function handleAnswerGeneration(tabId, pageContent, question, settings) {
 
         broadcastToTab(tabId, {
             type: 'answer-end',
-            markdownContent: accumulatedResponse
+            markdownContent: accumulatedResponse,
+            chatMode: session.sessionMeta.currentChatMode
         });
     } catch (error) {
+        const latestSession = getSession(tabId);
+        const isFinalizing = latestSession?.sessionMeta.isFinalizing;
+
         if (error.name === 'AbortError') {
-            const latestSession = getSession(tabId);
-            if (latestSession) {
+            if (latestSession && !isFinalizing) {
+                materializeCurrentAnswer(latestSession);
+                finalizeTurn(latestSession, turnId, latestSession.currentAnswer, 'stopped', '');
                 latestSession.generatingState = createIdleGeneratingState();
                 latestSession.completedAnswer = latestSession.currentAnswer;
                 touchSession(latestSession);
@@ -588,29 +793,33 @@ async function handleAnswerGeneration(tabId, pageContent, question, settings) {
                 await persistSessionLog(tabId, 'answer-stopped', settings);
             }
 
-            broadcastToTab(tabId, {
-                type: 'answer-stopped',
-                markdownContent: getSession(tabId)?.currentAnswer || ''
-            });
+            if (!isFinalizing) {
+                broadcastToTab(tabId, {
+                    type: 'answer-stopped',
+                    markdownContent: getSession(tabId)?.currentAnswer || ''
+                });
+            }
         } else {
             console.error('生成回答时出错:', error);
-            const latestSession = getSession(tabId);
 
-            if (latestSession) {
-                latestSession.history.push(createMessage(`发生错误：${error.message}`, false));
+            if (latestSession && !isFinalizing) {
+                latestSession.history.push(createMessage(`发生错误：${error.message}`, false, turnId));
+                finalizeTurn(latestSession, turnId, '', 'error', error.message);
                 latestSession.generatingState = createIdleGeneratingState();
                 touchSession(latestSession);
                 await saveSession(tabId, latestSession, true);
                 await persistSessionLog(tabId, 'answer-error', settings);
             }
 
-            broadcastToTab(tabId, {
-                type: 'error',
-                error: error.message
-            });
+            if (!isFinalizing) {
+                broadcastToTab(tabId, {
+                    type: 'error',
+                    error: error.message
+                });
+            }
         }
     } finally {
-        delete runtimeControllers[String(tabId)];
+        delete runtimeControllers[session.sessionMeta.sessionId];
     }
 }
 
@@ -620,37 +829,48 @@ async function stopGeneration(tabId, reason) {
         return { status: 'idle' };
     }
 
-    const controller = runtimeControllers[String(tabId)];
+    const controller = runtimeControllers[session.sessionMeta.sessionId];
     if (controller) {
         controller.abort(reason);
         return { status: 'stopping' };
     }
 
+    materializeCurrentAnswer(session);
+    finalizeTurn(session, session.generatingState.turnId, session.currentAnswer, 'stopped', '');
     session.generatingState = createIdleGeneratingState();
     touchSession(session);
     await saveSession(tabId, session, true);
     return { status: 'idle' };
 }
 
-function buildMessagesForRequest(session, settings, pageContent, question) {
+function buildMessagesForRequest(session, settings, question, pageContent, turn) {
     const history = settings.enableContext
         ? session.history.slice(-(Math.max(1, settings.maxContextRounds) * 2))
         : [];
 
-    return [
-        {
-            role: 'system',
-            content: settings.systemPrompt
-        },
-        ...history.map((message) => ({
-            role: message.isUser ? 'user' : 'assistant',
-            content: message.markdownContent || message.content
-        })),
-        {
-            role: 'user',
-            content: `基于以下网页内容回答问题：\n\n${pageContent}\n\n问题：${question}`
-        }
-    ];
+    const promptContent = turn.usesPageContext
+        ? (modeIsSelectionOnly(turn.chatMode)
+            ? `基于以下用户在网页上选中的内容回答问题：\n\n${pageContent}\n\n问题：${question}`
+            : `基于以下网页内容回答问题：\n\n${pageContent}\n\n问题：${question}`)
+        : question;
+
+    return {
+        promptContent,
+        requestMessages: [
+            {
+                role: 'system',
+                content: settings.systemPrompt
+            },
+            ...history.map((message) => ({
+                role: message.isUser ? 'user' : 'assistant',
+                content: message.markdownContent || message.content
+            })),
+            {
+                role: 'user',
+                content: promptContent
+            }
+        ]
+    };
 }
 
 function buildRequestBody(settings, model, messages) {
@@ -681,7 +901,8 @@ function buildHistoryResponse(session) {
             history: [],
             isGenerating: false,
             pendingQuestion: '',
-            currentAnswer: ''
+            currentAnswer: '',
+            chatMode: DEFAULT_CHAT_MODE
         };
     }
 
@@ -690,7 +911,8 @@ function buildHistoryResponse(session) {
         isGenerating: session.generatingState.isGenerating,
         pendingQuestion: session.generatingState.pendingQuestion,
         currentAnswer: session.currentAnswer || '',
-        sessionId: session.sessionMeta.sessionId
+        sessionId: session.sessionMeta.sessionId,
+        chatMode: session.sessionMeta.currentChatMode
     };
 }
 
@@ -713,7 +935,7 @@ async function getTabSnapshot(tabId, pageContent = '') {
     };
 }
 
-function createSession(tabInfo) {
+function createSession(tabInfo, chatMode = DEFAULT_CHAT_MODE) {
     const now = new Date().toISOString();
     return normalizeSession({
         sessionMeta: {
@@ -725,9 +947,12 @@ function createSession(tabInfo) {
             pageTitle: tabInfo.pageTitle,
             pageDomain: tabInfo.pageDomain,
             pageContentExcerpt: tabInfo.pageContentExcerpt,
-            pageContentLength: tabInfo.pageContentLength
+            pageContentLength: tabInfo.pageContentLength,
+            currentChatMode: normalizeChatMode(chatMode),
+            isFinalizing: false
         },
         history: [],
+        turns: [],
         generatingState: createIdleGeneratingState(),
         currentAnswer: '',
         completedAnswer: '',
@@ -749,6 +974,16 @@ function updateSessionPageInfo(session, tabInfo) {
     }
 }
 
+function createPageSnapshot(tabInfo) {
+    return {
+        title: tabInfo.pageTitle,
+        url: tabInfo.pageUrl,
+        domain: tabInfo.pageDomain,
+        excerpt: tabInfo.pageContentExcerpt,
+        contentLength: tabInfo.pageContentLength
+    };
+}
+
 function touchSession(session) {
     const now = new Date().toISOString();
     session.sessionMeta.updatedAt = now;
@@ -760,18 +995,51 @@ function createIdleGeneratingState() {
         isGenerating: false,
         pendingQuestion: '',
         requestId: '',
+        turnId: '',
         clientId: '',
-        startedAt: ''
+        startedAt: '',
+        chatMode: DEFAULT_CHAT_MODE
     };
 }
 
-function createMessage(content, isUser) {
+function createMessage(content, isUser, turnId = '') {
     return {
+        turnId,
         content,
         markdownContent: content,
         isUser,
         createdAt: new Date().toISOString()
     };
+}
+
+function getTurnById(session, turnId) {
+    return session.turns.find((turn) => turn.turnId === turnId) || null;
+}
+
+function finalizeTurn(session, turnId, answer, status, errorMessage) {
+    const turn = getTurnById(session, turnId);
+    if (!turn) {
+        return;
+    }
+
+    turn.answer = answer || '';
+    turn.status = status;
+    turn.errorMessage = errorMessage || '';
+}
+
+function materializeCurrentAnswer(session) {
+    if (!session?.currentAnswer?.trim()) {
+        return;
+    }
+
+    const turnId = session.generatingState.turnId;
+    const lastMessage = session.history[session.history.length - 1];
+
+    if (lastMessage && !lastMessage.isUser && lastMessage.content === session.currentAnswer && lastMessage.turnId === turnId) {
+        return;
+    }
+
+    session.history.push(createMessage(session.currentAnswer, false, turnId));
 }
 
 function processStreamLine(apiType, rawLine) {
@@ -823,6 +1091,10 @@ function createRequestId() {
     return `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function createTurnId() {
+    return `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function slugify(text = '') {
     return text
         .toLowerCase()
@@ -835,6 +1107,20 @@ function isReservationExpired(reservation) {
         return true;
     }
     return Date.now() - new Date(reservation.createdAt).getTime() > 60 * 1000;
+}
+
+function modeUsesPageContext(chatMode) {
+    return chatMode === CHAT_MODES.WEB_PERSISTED
+        || chatMode === CHAT_MODES.WEB_EPHEMERAL
+        || chatMode === CHAT_MODES.WEB_SELECTION;
+}
+
+function modeIsSelectionOnly(chatMode) {
+    return chatMode === CHAT_MODES.WEB_SELECTION;
+}
+
+function modeShouldPersist(chatMode) {
+    return chatMode === CHAT_MODES.WEB_PERSISTED || chatMode === CHAT_MODES.CHAT_PERSISTED;
 }
 
 function getRotationReason(session, tabInfo, settings, forQuestion) {
@@ -856,19 +1142,25 @@ function getRotationReason(session, tabInfo, settings, forQuestion) {
     return '';
 }
 
-async function rotateSessionIfPageChanged(tabId) {
+async function rotateSessionIfNeeded(tabId, forQuestion) {
     const session = getSession(tabId);
     if (!session) {
-        return;
+        return null;
     }
 
     const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
     const tabInfo = await getTabSnapshot(tabId);
-    const rotationReason = getRotationReason(session, tabInfo, settings, false);
+    const rotationReason = getRotationReason(session, tabInfo, settings, forQuestion);
 
-    if (rotationReason) {
-        await finalizeAndClearSession(tabId, rotationReason);
+    if (!rotationReason) {
+        return session;
     }
+
+    const nextChatMode = session.sessionMeta.currentChatMode;
+    await finalizeAndClearSession(tabId, rotationReason);
+    const nextSession = createSession(tabInfo, nextChatMode);
+    await saveSession(tabId, nextSession, true);
+    return nextSession;
 }
 
 function registerPort(tabId, port) {
@@ -911,6 +1203,21 @@ function broadcastToTab(tabId, message) {
     }
 }
 
+function broadcastChatModeUpdate(tabId, chatMode, reason) {
+    const message = {
+        action: 'chatModeUpdated',
+        tabId,
+        chatMode,
+        reason
+    };
+    // 扩展内部页面（popup / options）通过 runtime 接收
+    chrome.runtime.sendMessage(message).catch(() => { /* 没监听者就忽略 */ });
+    // 内容脚本必须通过 tabs.sendMessage，否则侧边面板收不到模式变更广播
+    if (typeof tabId === 'number') {
+        chrome.tabs.sendMessage(tabId, message).catch(() => { /* 标签页可能已关闭 */ });
+    }
+}
+
 async function finalizeAndClearSession(tabId, reason) {
     const session = getSession(tabId);
     if (!session) {
@@ -918,13 +1225,17 @@ async function finalizeAndClearSession(tabId, reason) {
     }
 
     const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    session.sessionMeta.isFinalizing = true;
 
     if (session.generatingState.isGenerating) {
-        const controller = runtimeControllers[String(tabId)];
+        const controller = runtimeControllers[session.sessionMeta.sessionId];
         if (controller) {
             controller.abort(reason);
         }
+        materializeCurrentAnswer(session);
+        finalizeTurn(session, session.generatingState.turnId, session.currentAnswer, 'stopped', '');
         session.generatingState = createIdleGeneratingState();
+        session.completedAnswer = session.currentAnswer;
     }
 
     session.sessionMeta.lastRotationReason = reason;
@@ -936,7 +1247,7 @@ async function finalizeAndClearSession(tabId, reason) {
 
 async function persistSessionLog(tabId, reason, providedSettings = null) {
     const session = getSession(tabId);
-    if (!session || session.history.length === 0) {
+    if (!session || session.turns.length === 0) {
         return;
     }
 
@@ -945,10 +1256,115 @@ async function persistSessionLog(tabId, reason, providedSettings = null) {
         return;
     }
 
+    const exportPayload = buildLogPayload(session, reason, settings);
+    if (!exportPayload) {
+        return;
+    }
+
     await flushPendingLogs(settings);
 
-    const model = settings[`${settings.apiType}_model`];
-    const payload = {
+    try {
+        const result = await postSessionLog(settings, exportPayload);
+        if (result?.filePath) {
+            session.sessionMeta.outputFilePath = result.filePath;
+            await saveSession(tabId, session, true);
+        }
+    } catch (error) {
+        console.warn('同步会话日志失败，已加入待重试队列:', error);
+        pendingLogsState[session.sessionMeta.sessionId] = exportPayload;
+        await flushPersistentState();
+    }
+}
+
+function buildLogPayload(session, reason, settings) {
+    const persistedTurns = session.turns.filter((turn) => turn.shouldPersist);
+    if (persistedTurns.length === 0) {
+        return null;
+    }
+
+    const messages = [];
+    const exportedTurns = [];
+    let skippedGapPending = false;
+
+    for (const turn of session.turns) {
+        if (!turn.shouldPersist) {
+            if (messages.length > 0) {
+                skippedGapPending = true;
+            }
+            continue;
+        }
+
+        if (skippedGapPending) {
+            const gapMessage = {
+                index: messages.length + 1,
+                role: 'assistant',
+                content: '【日志说明】中间存在未入库回合，已省略。',
+                createdAt: turn.createdAt
+            };
+            messages.push(gapMessage);
+            exportedTurns.push({
+                type: 'gap',
+                createdAt: turn.createdAt,
+                note: gapMessage.content
+            });
+            skippedGapPending = false;
+        }
+
+        if (turn.usesPageContext && turn.pageSnapshot) {
+            const snapshotContent = buildPageSnapshotNote(turn.pageSnapshot);
+            const snapshotMessage = {
+                index: messages.length + 1,
+                role: 'assistant',
+                content: snapshotContent,
+                createdAt: turn.createdAt
+            };
+            messages.push(snapshotMessage);
+        }
+
+        const userMessage = {
+            index: messages.length + 1,
+            role: 'user',
+            content: turn.question,
+            createdAt: turn.createdAt
+        };
+        messages.push(userMessage);
+
+        if (turn.answer) {
+            messages.push({
+                index: messages.length + 1,
+                role: 'assistant',
+                content: turn.answer,
+                createdAt: turn.createdAt
+            });
+        } else if (turn.errorMessage) {
+            messages.push({
+                index: messages.length + 1,
+                role: 'assistant',
+                content: `发生错误：${turn.errorMessage}`,
+                createdAt: turn.createdAt
+            });
+        }
+
+        exportedTurns.push({
+            type: 'turn',
+            turnId: turn.turnId,
+            createdAt: turn.createdAt,
+            chatMode: turn.chatMode,
+            usesPageContext: turn.usesPageContext,
+            shouldPersist: turn.shouldPersist,
+            pageSnapshot: turn.pageSnapshot,
+            status: turn.status,
+            messages: [
+                { role: 'user', content: turn.question, createdAt: turn.createdAt },
+                ...(turn.answer ? [{ role: 'assistant', content: turn.answer, createdAt: turn.createdAt }] : []),
+                ...(turn.errorMessage ? [{ role: 'assistant', content: `发生错误：${turn.errorMessage}`, createdAt: turn.createdAt }] : [])
+            ]
+        });
+    }
+
+    const sessionPage = buildSessionPageForExport(persistedTurns);
+
+    return {
         version: chrome.runtime.getManifest().version,
         savedAt: new Date().toISOString(),
         reason,
@@ -959,43 +1375,75 @@ async function persistSessionLog(tabId, reason, providedSettings = null) {
             startedAt: session.sessionMeta.startedAt,
             updatedAt: session.sessionMeta.updatedAt,
             status: session.generatingState.isGenerating ? 'generating' : 'completed',
-            page: {
-                title: session.sessionMeta.pageTitle,
-                url: session.sessionMeta.pageUrl,
-                domain: session.sessionMeta.pageDomain,
-                excerpt: session.sessionMeta.pageContentExcerpt,
-                contentLength: session.sessionMeta.pageContentLength
-            },
+            page: sessionPage,
             assistant: {
                 apiType: settings.apiType,
-                model,
+                model: settings[`${settings.apiType}_model`],
                 temperature: settings.temperature,
                 maxTokens: settings.maxTokens,
                 enableContext: settings.enableContext,
-                maxContextRounds: settings.maxContextRounds
+                maxContextRounds: settings.maxContextRounds,
+                chatMode: session.sessionMeta.currentChatMode
             },
-            messages: session.history.map((message, index) => ({
-                index: index + 1,
-                role: message.isUser ? 'user' : 'assistant',
-                content: message.markdownContent || message.content,
-                createdAt: message.createdAt
-            })),
-            messageCount: session.history.length,
-            turnCount: Math.ceil(session.history.length / 2)
+            messages,
+            turns: exportedTurns,
+            messageCount: messages.length,
+            turnCount: persistedTurns.length
         }
     };
+}
 
-    try {
-        const result = await postSessionLog(settings, payload);
-        if (result?.filePath) {
-            session.sessionMeta.outputFilePath = result.filePath;
-            await saveSession(tabId, session, true);
-        }
-    } catch (error) {
-        console.warn('同步会话日志失败，已加入待重试队列:', error);
-        pendingLogsState[session.sessionMeta.sessionId] = payload;
-        await flushPersistentState();
+function buildPageSnapshotNote(pageSnapshot) {
+    const lines = ['【页面上下文】'];
+
+    if (pageSnapshot.title) {
+        lines.push(`- 标题: ${pageSnapshot.title}`);
     }
+    if (pageSnapshot.url) {
+        lines.push(`- 地址: ${pageSnapshot.url}`);
+    }
+    if (pageSnapshot.domain) {
+        lines.push(`- 域名: ${pageSnapshot.domain}`);
+    }
+    if (pageSnapshot.excerpt) {
+        lines.push('', '```text', pageSnapshot.excerpt, '```');
+    }
+
+    return lines.join('\n');
+}
+
+function buildSessionPageForExport(persistedTurns) {
+    const webTurns = persistedTurns.filter((turn) => turn.usesPageContext && turn.pageSnapshot);
+    if (webTurns.length === 0) {
+        return {
+            title: '',
+            url: '',
+            domain: '',
+            excerpt: '',
+            contentLength: 0
+        };
+    }
+
+    const firstSnapshot = webTurns[0].pageSnapshot;
+    const samePage = webTurns.every((turn) => turn.pageSnapshot?.url === firstSnapshot.url);
+
+    if (samePage) {
+        return {
+            title: firstSnapshot.title,
+            url: firstSnapshot.url,
+            domain: firstSnapshot.domain,
+            excerpt: firstSnapshot.excerpt,
+            contentLength: firstSnapshot.contentLength
+        };
+    }
+
+    return {
+        title: '混合网页会话',
+        url: '',
+        domain: '',
+        excerpt: '',
+        contentLength: 0
+    };
 }
 
 async function postSessionLog(settings, payload) {

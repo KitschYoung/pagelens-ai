@@ -27,6 +27,10 @@ function parseWebContent() {
         .trim();               // 移除首尾空白
 }
 
+let activeDialogSyncController = null;
+// 从 shared/chatModes.js 读取统一定义
+const { CHAT_MODE_META, CHAT_MODES, DEFAULT_CHAT_MODE, normalizeChatMode } = self.WebChatModes;
+
 // 创建对话框
 function createDialog() {
     // 先移除可能存在的旧对话框
@@ -38,200 +42,238 @@ function createDialog() {
     const dialog = document.createElement('div');
     dialog.id = 'ai-assistant-dialog';
 
-    // 复制popup.html的内容结构
+    // 侧边栏模式：面板停靠到屏幕一侧，整页高度，挤压页面内容
+    dialog.dataset.panelSide = 'right';
     dialog.innerHTML = `
         <div class="container">
             <div class="header">
-                <div class="tokens-counter">Tokens: 0</div>
+                <div class="header-main">
+                    <div class="tokens-counter">Tokens: 0</div>
+                    <div class="chat-mode-control">
+                        <span class="chat-mode-label">会话模式</span>
+                        <div class="chat-mode-group" id="chatModeGroup" role="radiogroup" aria-label="会话模式">
+                            <button type="button" class="chat-mode-btn" data-mode="web_persisted" aria-pressed="false" title="基于整页内容回答，写入知识库">网页+入库</button>
+                            <button type="button" class="chat-mode-btn" data-mode="web_ephemeral" aria-pressed="false" title="基于整页内容回答，不入库">网页+临时</button>
+                            <button type="button" class="chat-mode-btn" data-mode="web_selection" aria-pressed="false" title="只用页面选中文本作为上下文">选中+临时</button>
+                            <button type="button" class="chat-mode-btn" data-mode="chat_persisted" aria-pressed="false" title="纯聊天，写入知识库">纯聊+入库</button>
+                            <button type="button" class="chat-mode-btn" data-mode="chat_ephemeral" aria-pressed="false" title="纯聊天，不入库">纯聊+临时</button>
+                        </div>
+                    </div>
+                    <div class="panel-actions">
+                        <button type="button" class="panel-clear" title="清空当前会话">🧹</button>
+                        <button type="button" class="panel-width-cycle" title="切换预设宽度">⤢</button>
+                        <button type="button" class="panel-side-switch" title="切换左右停靠">⇄</button>
+                        <button type="button" class="panel-close" title="关闭面板 (Esc 也可关)">×</button>
+                    </div>
+                </div>
+                <div id="chatModeHint" class="storage-mode-hint">基于网页内容回答，且会写入知识库。</div>
             </div>
             <div id="chat-container" class="chat-container">
                 <div id="messages" class="messages"></div>
             </div>
             <div class="input-container">
-                <textarea id="userInput" placeholder="请输入您的问题..." rows="2"></textarea>
+                <div class="slash-menu" id="slashMenu" hidden role="listbox" aria-label="提示词模板"></div>
+                <div class="selection-chip" id="selectionChip" hidden>
+                    <span class="sel-icon">“</span>
+                    <span class="sel-text">引用选中内容</span>
+                    <span class="sel-len">0</span>
+                    <span class="sel-dismiss" title="取消引用">×</span>
+                </div>
+                <textarea id="userInput" placeholder="请输入您的问题... (Enter 发送 / Shift+Enter 换行 / Esc 关闭)" rows="2"></textarea>
                 <button id="askButton" class="send-button">
                 </button>
             </div>
         </div>
-        <div class="resize-handle"></div>
+        <div class="resize-handle resize-handle-panel" data-resize-dir="w"></div>
     `;
 
-    // 添加拖动功能
-    const container = dialog.querySelector('.container');
-    const header = dialog.querySelector('.header');
-
-    // 声明拖动相关的变量
-    let isDragging = false;
-    let dragCurrentX;
-    let dragCurrentY;
-    let dragInitialX;
-    let dragInitialY;
-
-    // 创建遮罩层
+    // 创建遮罩层（仅在拉伸时用来阻挡下层鼠标事件，不挡视线）
     const overlay = document.createElement('div');
     overlay.className = 'dialog-overlay';
     document.body.appendChild(overlay);
 
-    // 修改拖动相关代码
-    header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.toggle-ball')) return;
+    // 侧边栏参数
+    const MIN_W = 320;
+    const EDGE_RESERVE = 80; // 至少给原页面留下 80px
+    const DEFAULT_W = 420;
 
-        isDragging = true;
-        dialog.style.transition = 'none';
-        const rect = dialog.getBoundingClientRect();
-        dragInitialX = e.clientX - rect.left;
-        dragInitialY = e.clientY - rect.top;
+    function effectiveMaxWidth() {
+        return Math.max(MIN_W, window.innerWidth - EDGE_RESERVE);
+    }
 
-        // 显示遮罩层
-        overlay.classList.add('dragging');
-    });
+    function clampWidth(width) {
+        return Math.max(MIN_W, Math.min(Math.round(width), effectiveMaxWidth()));
+    }
 
-    // 使用requestAnimationFrame优化拖动
-    let dragAnimationFrame;
-    document.addEventListener('mousemove', (e) => {
-        if (isDragging) {
-            e.preventDefault();
+    // 把挤压效果应用到 <html>；用 margin 方式，兼容绝大多数站点
+    function applyBodyOffset(side, width) {
+        const html = document.documentElement;
+        html.classList.add('ai-assistant-panel-open');
+        html.style.setProperty('transition', 'margin 0.2s ease', 'important');
+        if (side === 'left') {
+            html.style.setProperty('margin-left', `${width}px`, 'important');
+            html.style.removeProperty('margin-right');
+        } else {
+            html.style.setProperty('margin-right', `${width}px`, 'important');
+            html.style.removeProperty('margin-left');
+        }
+    }
 
-            // 取消之前的动画帧
-            if (dragAnimationFrame) {
-                cancelAnimationFrame(dragAnimationFrame);
-            }
+    function clearBodyOffset() {
+        const html = document.documentElement;
+        html.classList.remove('ai-assistant-panel-open');
+        html.style.removeProperty('margin-right');
+        html.style.removeProperty('margin-left');
+        html.style.removeProperty('transition');
+    }
 
-            // 请求新的动画帧
-            dragAnimationFrame = requestAnimationFrame(() => {
-                dragCurrentX = e.clientX - dragInitialX;
-                dragCurrentY = e.clientY - dragInitialY;
+    function applyPanelSide(side) {
+        const s = side === 'left' ? 'left' : 'right';
+        dialog.dataset.panelSide = s;
+        const handle = dialog.querySelector('.resize-handle-panel');
+        if (handle) {
+            handle.dataset.resizeDir = s === 'right' ? 'w' : 'e';
+        }
+        if (dialog.classList.contains('show')) {
+            applyBodyOffset(s, dialog.offsetWidth);
+        }
+    }
 
-                // 确保不会超出屏幕边界
-                const maxX = window.innerWidth - dialog.offsetWidth;
-                const maxY = window.innerHeight - dialog.offsetHeight;
+    function applyPanelWidth(width) {
+        const w = clampWidth(width);
+        dialog.style.width = `${w}px`;
+        if (dialog.classList.contains('show')) {
+            applyBodyOffset(dialog.dataset.panelSide || 'right', w);
+        }
+        return w;
+    }
 
-                dragCurrentX = Math.max(0, Math.min(dragCurrentX, maxX));
-                dragCurrentY = Math.max(0, Math.min(dragCurrentY, maxY));
-
-                // 直接设置left和top
-                dialog.style.left = `${dragCurrentX}px`;
-                dialog.style.top = `${dragCurrentY}px`;
-            });
+    // 监听 .show 的增减，自动同步/清除 body margin
+    const showObserver = new MutationObserver(() => {
+        if (dialog.classList.contains('show')) {
+            applyBodyOffset(dialog.dataset.panelSide || 'right', dialog.offsetWidth || DEFAULT_W);
+        } else {
+            clearBodyOffset();
         }
     });
+    showObserver.observe(dialog, { attributes: true, attributeFilter: ['class'] });
 
-    document.addEventListener('mouseup', () => {
-        if (isDragging) {
-            isDragging = false;
-            dialog.style.transition = '';
+    // 头部按钮：切换停靠方向 + 关闭
+    const sideSwitchBtn = dialog.querySelector('.panel-side-switch');
+    if (sideSwitchBtn) {
+        sideSwitchBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const next = (dialog.dataset.panelSide || 'right') === 'right' ? 'left' : 'right';
+            applyPanelSide(next);
+            chrome.storage.sync.set({ panelSide: next });
+        });
+    }
+    const closeBtn = dialog.querySelector('.panel-close');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dialog.classList.remove('show');
+        });
+    }
 
-            // 隐藏遮罩层
-            overlay.classList.remove('dragging');
-
-            if (dragAnimationFrame) {
-                cancelAnimationFrame(dragAnimationFrame);
-            }
-
-            // 保存位置
-            chrome.storage.sync.set({
-                dialogPosition: {
-                    left: dialog.style.left,
-                    top: dialog.style.top
+    // 一键清空当前会话
+    const clearBtn = dialog.querySelector('.panel-clear');
+    if (clearBtn) {
+        clearBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (!confirm('确定要清空当前会话吗？历史消息将被归档。')) return;
+            try {
+                const res = await sendMessageWithRetry({ action: 'getCurrentTab' });
+                const targetTabId = res?.tabId;
+                await sendMessageWithRetry({
+                    action: 'clearHistory',
+                    tabId: targetTabId,
+                    reason: 'user-cleared'
+                });
+                // 让当前 initializeDialog 内的消息 UI 重置
+                if (activeDialogSyncController && activeDialogSyncController.resetMessagesUI) {
+                    activeDialogSyncController.resetMessagesUI();
                 }
-            });
-        }
-    });
+            } catch (err) {
+                console.error('清空会话失败:', err);
+            }
+        });
+    }
 
-    // 从存储中加载对话框位置
-    chrome.storage.sync.get({
-        dialogPosition: {
-            left: 'auto',
-            top: 'auto',
-            isCustomPosition: false
-        }
-    }, (items) => {
-        // 只有当存在自定义位置时才应用
-        if (items.dialogPosition.isCustomPosition) {
-            dialog.style.left = items.dialogPosition.left;
-            dialog.style.top = items.dialogPosition.top;
-        }
-    });
+    // 宽度预设循环：360 -> 420 -> 560 -> 越宽越窄
+    const WIDTH_PRESETS = [360, 420, 560, 760];
+    const widthCycleBtn = dialog.querySelector('.panel-width-cycle');
+    if (widthCycleBtn) {
+        widthCycleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const current = dialog.offsetWidth;
+            // 找下一个严格大于当前宽度的预设；循环
+            const next = WIDTH_PRESETS.find((w) => w > current + 4) ?? WIDTH_PRESETS[0];
+            const applied = applyPanelWidth(next);
+            chrome.storage.sync.set({ panelWidth: applied });
+        });
+    }
 
-    // 调整大小功能
-    const resizeHandle = dialog.querySelector('.resize-handle');
-
-    resizeHandle.addEventListener('mousedown', (e) => {
-        isResizing = true;
-        dialog.style.transition = 'none'; // 禁用过渡动画
-        resizeInitialWidth = dialog.offsetWidth;
-        resizeInitialHeight = dialog.offsetHeight;
-        resizeInitialX = e.clientX;
-        resizeInitialY = e.clientY;
-
-        // 添加临时的全局事件监听器
-        document.addEventListener('mousemove', handleResize);
-        document.addEventListener('mouseup', stopResize);
-
-        e.preventDefault();
-        e.stopPropagation();
-    });
-
-    // 使用requestAnimationFrame优化调整大小
+    // 单轴拖拽改宽度
+    let isResizing = false;
+    let resizeStart = null;
     let resizeAnimationFrame;
+    const resizeHandle = dialog.querySelector('.resize-handle-panel');
+    if (resizeHandle) {
+        resizeHandle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            dialog.style.transition = 'none';
+            resizeStart = {
+                x: e.clientX,
+                width: dialog.offsetWidth,
+                side: dialog.dataset.panelSide || 'right'
+            };
+            document.addEventListener('mousemove', handleResize);
+            document.addEventListener('mouseup', stopResize);
+            overlay.classList.add('dragging');
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    }
+
     function handleResize(e) {
-        if (!isResizing) return;
+        if (!isResizing || !resizeStart) return;
+        if (resizeAnimationFrame) cancelAnimationFrame(resizeAnimationFrame);
 
-        // 取消之前的动画帧
-        if (resizeAnimationFrame) {
-            cancelAnimationFrame(resizeAnimationFrame);
-        }
-
-        // 请求新的动画帧
         resizeAnimationFrame = requestAnimationFrame(() => {
-            const deltaX = e.clientX - resizeInitialX;
-            const deltaY = e.clientY - resizeInitialY;
-
-            const newWidth = Math.max(300, resizeInitialWidth + deltaX);
-            const newHeight = Math.max(400, resizeInitialHeight + deltaY);
-
-            const rect = dialog.getBoundingClientRect();
-            const maxWidth = window.innerWidth - rect.left - 20;
-            const maxHeight = window.innerHeight - rect.top - 20;
-
-            const finalWidth = Math.min(newWidth, maxWidth);
-            const finalHeight = Math.min(newHeight, maxHeight);
-
-            dialog.style.width = `${finalWidth}px`;
-            dialog.style.height = `${finalHeight}px`;
-
-            // 保存尺寸
-            chrome.storage.sync.set({
-                dialogSize: {
-                    width: finalWidth,
-                    height: finalHeight
-                }
-            });
+            const delta = e.clientX - resizeStart.x;
+            // 右停靠时拖向左侧（delta 负）放大；左停靠时拖向右侧（delta 正）放大
+            const raw = resizeStart.side === 'right'
+                ? resizeStart.width - delta
+                : resizeStart.width + delta;
+            const applied = applyPanelWidth(raw);
+            chrome.storage.sync.set({ panelWidth: applied });
         });
     }
 
     function stopResize() {
-        if (isResizing) {
-            isResizing = false;
-            dialog.style.transition = ''; // 恢复过渡动画
-            document.removeEventListener('mousemove', handleResize);
-            document.removeEventListener('mouseup', stopResize);
-
-            if (resizeAnimationFrame) {
-                cancelAnimationFrame(resizeAnimationFrame);
-            }
-        }
+        if (!isResizing) return;
+        isResizing = false;
+        resizeStart = null;
+        dialog.style.transition = '';
+        document.removeEventListener('mousemove', handleResize);
+        document.removeEventListener('mouseup', stopResize);
+        overlay.classList.remove('dragging');
+        if (resizeAnimationFrame) cancelAnimationFrame(resizeAnimationFrame);
     }
 
-    // 从存储中加载对话框尺寸
+    // 初始化：从存储读取停靠方向和宽度
     chrome.storage.sync.get({
-        dialogSize: {
-            width: 400,
-            height: 500
-        }
+        panelWidth: DEFAULT_W,
+        panelSide: 'right'
     }, (items) => {
-        dialog.style.width = `${items.dialogSize.width}px`;
-        dialog.style.height = `${items.dialogSize.height}px`;
+        applyPanelSide(items.panelSide);
+        applyPanelWidth(items.panelWidth);
+    });
+
+    // 窗口缩放时重新收敛宽度并同步 body offset
+    window.addEventListener('resize', () => {
+        applyPanelWidth(dialog.offsetWidth || DEFAULT_W);
     });
 
     document.body.appendChild(dialog);
@@ -241,9 +283,9 @@ function createDialog() {
         const ball = document.getElementById('ai-assistant-ball');
         const contextMenu = document.querySelector('.context-menu');
 
-        // 获取自动隐藏设置
+        // 获取自动隐藏设置（侧边栏模式下默认关闭，避免误触关掉面板）
         const settings = await chrome.storage.sync.get({
-            autoHideDialog: true // 默认开启
+            autoHideDialog: false
         });
 
         if (settings.autoHideDialog && // 检查设置
@@ -293,64 +335,9 @@ function createFloatingBall() {
         chrome.runtime.sendMessage({ action: 'openOptions' });
     });
 
-    // 悬浮球点击事件
+    // 悬浮球点击事件：侧边栏模式下只做 show/hide 切换
     ball.addEventListener('click', () => {
-        const isVisible = dialog.classList.contains('show');
-        if (!isVisible) {
-            // 计算对话框的理想位置
-            const ballRect = ball.getBoundingClientRect();
-            const windowWidth = window.innerWidth;
-            const windowHeight = window.innerHeight;
-            const dialogWidth = dialog.offsetWidth || 400; // 使用当前宽度或默认值
-            const dialogHeight = dialog.offsetHeight || 500; // 使用当前高度或默认值
-
-            // 默认尝试将对话框放在悬浮球的左侧
-            let left = ballRect.left - dialogWidth - 20; // 20px作为间距
-            let top = Math.min(
-                ballRect.top,
-                windowHeight - dialogHeight - 20
-            );
-
-            // 如果左侧放不下，尝试放在右侧
-            if (left < 20) {
-                left = ballRect.right + 20;
-
-                // 如果右侧也放不下，放在屏幕中央，但要避免被悬浮球遮挡
-                if (left + dialogWidth > windowWidth - 20) {
-                    // 如果悬浮球在右半部分，对话框放在左半部分
-                    if (ballRect.left > windowWidth / 2) {
-                        left = 20;
-                    } else {
-                        // 否则放在右半部分
-                        left = windowWidth - dialogWidth - 20;
-                    }
-                }
-            }
-
-            // 确保顶部有足够空间，否则将对话框放在下方
-            if (top < 20) {
-                top = Math.min(
-                    ballRect.bottom + 20,
-                    windowHeight - dialogHeight - 20
-                );
-            }
-
-            // 最终的边界检查
-            left = Math.max(20, Math.min(left, windowWidth - dialogWidth - 20));
-            top = Math.max(20, Math.min(top, windowHeight - dialogHeight - 20));
-
-            // 应用位置
-            dialog.style.left = `${left}px`;
-            dialog.style.top = `${top}px`;
-            dialog.style.right = 'auto';
-            dialog.style.bottom = 'auto';
-
-            // 显示对话框
-            dialog.classList.add('show');
-        } else {
-            // 隐藏对话框时不改变位置
-            dialog.classList.remove('show');
-        }
+        dialog.classList.toggle('show');
     });
 
     // 将悬浮球和设置按钮添加到容器中
@@ -371,89 +358,107 @@ function createFloatingBall() {
         initialY = e.clientY - rect.top;
     });
 
+    // 拖动期间：自由跟随鼠标，不做任何吸附，保证拖拽手感丝滑
     document.addEventListener('mousemove', (e) => {
-        if (isDragging) {
-            e.preventDefault();
-            currentX = e.clientX - initialX;
-            currentY = e.clientY - initialY;
+        if (!isDragging) return;
 
-            // 确保不会超出屏幕边界
-            const maxX = window.innerWidth - container.offsetWidth;
-            const maxY = window.innerHeight - container.offsetHeight;
-            const edgeThreshold = ball.offsetWidth / 2;
+        e.preventDefault();
+        currentX = e.clientX - initialX;
+        currentY = e.clientY - initialY;
 
-            // 移除所有边缘类
-            ball.classList.remove('edge-left', 'edge-right', 'edge-top', 'edge-bottom');
+        const maxX = window.innerWidth - container.offsetWidth;
+        const maxY = window.innerHeight - container.offsetHeight;
 
-            // 检查是否靠近边缘并添加相应的类
-            let position = {};
-            if (currentX <= edgeThreshold) {
-                currentX = 0;
-                ball.classList.add('edge-left');
-                position = {
-                    left: '0px',
-                    top: `${currentY}px`,
-                    right: 'auto',
-                    bottom: 'auto',
-                    edge: 'left'
-                };
-            } else if (currentX >= maxX - edgeThreshold) {
-                currentX = maxX;
-                ball.classList.add('edge-right');
-                position = {
-                    right: '0px',
-                    top: `${currentY}px`,
-                    left: 'auto',
-                    bottom: 'auto',
-                    edge: 'right'
-                };
-            } else if (currentY <= edgeThreshold) {
-                currentY = 0;
-                ball.classList.add('edge-top');
-                position = {
-                    top: '0px',
-                    left: `${currentX}px`,
-                    right: 'auto',
-                    bottom: 'auto',
-                    edge: 'top'
-                };
-            } else if (currentY >= maxY - edgeThreshold) {
-                currentY = maxY;
-                ball.classList.add('edge-bottom');
-                position = {
-                    bottom: '0px',
-                    left: `${currentX}px`,
-                    right: 'auto',
-                    top: 'auto',
-                    edge: 'bottom'
-                };
-            } else {
-                position = {
-                    left: `${currentX}px`,
-                    top: `${currentY}px`,
-                    right: 'auto',
-                    bottom: 'auto',
-                    edge: null
-                };
-            }
+        currentX = Math.max(0, Math.min(currentX, maxX));
+        currentY = Math.max(0, Math.min(currentY, maxY));
 
-            // 应用位置到容器
-            Object.assign(container.style, position);
-
-            // 保存位置和边缘状态到存储
-            chrome.storage.sync.set({
-                ballPosition: position
-            });
-        }
+        // 拖动中先清掉 edge-* 类，避免半吸附抖动
+        ball.classList.remove('edge-left', 'edge-right', 'edge-top', 'edge-bottom');
+        container.style.transition = 'none';
+        Object.assign(container.style, {
+            left: `${currentX}px`,
+            top: `${currentY}px`,
+            right: 'auto',
+            bottom: 'auto'
+        });
     });
 
+    // 松开时：计算到四条边的距离，始终吸附到最近的一条边
     document.addEventListener('mouseup', () => {
+        if (!isDragging) return;
         isDragging = false;
+
+        const containerW = container.offsetWidth;
+        const containerH = container.offsetHeight;
+        const winW = window.innerWidth;
+        const winH = window.innerHeight;
+
+        const x = typeof currentX === 'number'
+            ? currentX
+            : container.getBoundingClientRect().left;
+        const y = typeof currentY === 'number'
+            ? currentY
+            : container.getBoundingClientRect().top;
+
+        const distLeft = x;
+        const distRight = winW - (x + containerW);
+        const distTop = y;
+        const distBottom = winH - (y + containerH);
+
+        const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+
+        let edge;
+        let position;
+        if (minDist === distLeft) {
+            edge = 'left';
+            position = {
+                left: '0px',
+                top: `${Math.max(0, Math.min(y, winH - containerH))}px`,
+                right: 'auto',
+                bottom: 'auto',
+                edge
+            };
+        } else if (minDist === distRight) {
+            edge = 'right';
+            position = {
+                right: '0px',
+                top: `${Math.max(0, Math.min(y, winH - containerH))}px`,
+                left: 'auto',
+                bottom: 'auto',
+                edge
+            };
+        } else if (minDist === distTop) {
+            edge = 'top';
+            position = {
+                top: '0px',
+                left: `${Math.max(0, Math.min(x, winW - containerW))}px`,
+                right: 'auto',
+                bottom: 'auto',
+                edge
+            };
+        } else {
+            edge = 'bottom';
+            position = {
+                bottom: '0px',
+                left: `${Math.max(0, Math.min(x, winW - containerW))}px`,
+                right: 'auto',
+                top: 'auto',
+                edge
+            };
+        }
+
+        ball.classList.remove('edge-left', 'edge-right', 'edge-top', 'edge-bottom');
+        ball.classList.add(`edge-${edge}`);
+        // 用过渡动画让吸附过程更平滑
+        container.style.transition = 'left 0.2s ease, top 0.2s ease, right 0.2s ease, bottom 0.2s ease';
+        Object.assign(container.style, position);
+
+        chrome.storage.sync.set({ ballPosition: position });
     });
 
     // 从存储中加载位置，并确保位置在可视区域内
     chrome.storage.sync.get({
-        ballPosition: { right: '20px', bottom: '20px', left: 'auto', top: 'auto', edge: null }
+        ballPosition: { right: '0px', bottom: '20px', left: 'auto', top: 'auto', edge: 'right' }
     }, (items) => {
         // 获取容器和窗口尺寸
         const containerRect = container.getBoundingClientRect();
@@ -745,8 +750,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         } else if (request.action === 'getPageContent') {
             const content = parseWebContent();
             sendResponse({ content });
+        } else if (request.action === 'getSelection') {
+            const selection = window.getSelection ? window.getSelection().toString().trim() : '';
+            sendResponse({ selection });
         } else if (request.action === 'toggleFloatingBall') {
             checkAndSetBallVisibility();
+            sendResponse({ status: 'ok' });
+        } else if (request.action === 'togglePanel') {
+            const dialog = document.getElementById('ai-assistant-dialog');
+            if (dialog) {
+                dialog.classList.toggle('show');
+                if (dialog.classList.contains('show')) {
+                    const ta = dialog.querySelector('#userInput');
+                    if (ta) setTimeout(() => ta.focus(), 150);
+                }
+            } else {
+                // 面板还没构建，先让 ball 逻辑打开
+                const ball = document.getElementById('ai-assistant-ball');
+                if (ball) ball.click();
+            }
+            sendResponse({ status: 'ok' });
+        } else if (request.action === 'chatModeUpdated') {
+            if (activeDialogSyncController && activeDialogSyncController.tabId === request.tabId) {
+                void activeDialogSyncController.applyChatModeUpdate(request.chatMode, true);
+            }
             sendResponse({ status: 'ok' });
         }
     } catch (error) {
@@ -766,11 +793,16 @@ async function initializeDialog(dialog) {
         const askButton = dialog.querySelector('#askButton');
         const messagesContainer = dialog.querySelector('#messages');
         const chatContainer = dialog.querySelector('#chat-container');
+        const chatModeGroup = dialog.querySelector('#chatModeGroup');
+        const chatModeButtons = chatModeGroup ? Array.from(chatModeGroup.querySelectorAll('.chat-mode-btn')) : [];
+        const chatModeHint = dialog.querySelector('#chatModeHint');
         let isGenerating = false;
         let currentPort = null;
         let currentAnswer = '';
         let userHasScrolled = false;
         const clientId = `dialog-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        let currentChatMode = 'web_persisted';
+        let suppressModeSelect = false;
 
         // 创建并添加滚动按钮
         const scrollToBottomButton = createScrollToBottomButton(messagesContainer);
@@ -882,6 +914,43 @@ async function initializeDialog(dialog) {
         // 初化marked
         const markedInstance = await initMarked();
 
+        function renderWelcomeMessage() {
+            const welcomeDiv = document.createElement('div');
+            welcomeDiv.className = 'welcome-message';
+            welcomeDiv.innerHTML = '<p>👋 你好！我是AI助手，可以帮你理解和分析当前网页的内容。</p>';
+            messagesContainer.appendChild(welcomeDiv);
+        }
+
+        function updateChatModeUI(chatMode) {
+            currentChatMode = CHAT_MODE_META[chatMode] ? chatMode : 'web_persisted';
+            suppressModeSelect = true;
+            chatModeButtons.forEach((btn) => {
+                const active = btn.dataset.mode === currentChatMode;
+                btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+                btn.classList.toggle('active', active);
+            });
+            suppressModeSelect = false;
+
+            const meta = CHAT_MODE_META[currentChatMode];
+            chatModeHint.textContent = meta.hint;
+            chatModeHint.className = `storage-mode-hint ${meta.hintClass}`;
+        }
+
+        async function applyChatModeUpdate(chatMode, reloadOnly) {
+            updateChatModeUI(chatMode);
+
+            if (!reloadOnly) {
+                const label = CHAT_MODE_META[currentChatMode]?.label || currentChatMode;
+                addMessage(`已切换会话模式：${label}`, false);
+            }
+        }
+
+        activeDialogSyncController = {
+            tabId,
+            applyChatModeUpdate,
+            resetMessagesUI: () => resetMessagesUI()
+        };
+
         // 加载历史会话
         async function loadHistory() {
             try {
@@ -890,13 +959,11 @@ async function initializeDialog(dialog) {
                     tabId: tabId
                 });
 
+                updateChatModeUI(response?.chatMode || 'web_persisted');
                 messagesContainer.innerHTML = '';
 
                 if (!response || !response.history || response.history.length === 0) {
-                    const welcomeDiv = document.createElement('div');
-                    welcomeDiv.className = 'welcome-message';
-                    welcomeDiv.innerHTML = '<p>👋 你好！我是AI助手，可以帮你理解和分析当前网页的内容。</p>';
-                    messagesContainer.appendChild(welcomeDiv);
+                    renderWelcomeMessage();
                 } else {
                     response.history.forEach(msg => {
                         const messageDiv = document.createElement('div');
@@ -951,9 +1018,9 @@ async function initializeDialog(dialog) {
                                     if (msg.type === 'answer-stopped' && streamAnswer.trim()) {
                                         addMessage('已停止回复', false);
                                     }
-                                    messageDiv.removeAttribute('data-pending');
-                                    isGenerating = false;
-                                    userInput.disabled = false;
+                                messageDiv.removeAttribute('data-pending');
+                                isGenerating = false;
+                                userInput.disabled = false;
                                     askButton.disabled = false;
                                     askButton.classList.remove('generating');
                                     typingIndicator.remove();
@@ -961,7 +1028,21 @@ async function initializeDialog(dialog) {
                                     currentPort = null;
                                     autoScroll(true);
                                 } else if (msg.type === 'session-reset') {
+                                    if (currentPort) {
+                                        try {
+                                            currentPort.disconnect();
+                                        } catch (error) {
+                                            console.debug('关闭端口失败:', error);
+                                        }
+                                        currentPort = null;
+                                    }
+                                    isGenerating = false;
+                                    userInput.disabled = false;
+                                    askButton.disabled = false;
+                                    askButton.classList.remove('generating');
+                                    updateChatModeUI(msg.chatMode || currentChatMode);
                                     resetMessagesUI();
+                                    await loadHistory();
                                 } else if (msg.type === 'error') {
                                     messageDiv.remove();
                                     addMessage('发生错误：' + msg.error, false);
@@ -988,17 +1069,46 @@ async function initializeDialog(dialog) {
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             } catch (error) {
                 console.error('加载历史记录失败:', error);
-                messagesContainer.innerHTML = `
-                    <div class="welcome-message">
-                        <p>👋 你好！我是AI助手，可以帮你理解和分析当前网页的内容。</p>
-                    </div>
-                `;
+                messagesContainer.innerHTML = '';
+                renderWelcomeMessage();
             }
         }
 
         function resetMessagesUI() {
             messagesContainer.innerHTML = '';
+            renderWelcomeMessage();
         }
+
+        chatModeButtons.forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                if (suppressModeSelect) {
+                    return;
+                }
+
+                const targetMode = btn.dataset.mode;
+                if (!targetMode || targetMode === currentChatMode) {
+                    return;
+                }
+
+                try {
+                    const response = await sendMessageWithRetry({
+                        action: 'setChatMode',
+                        tabId: tabId,
+                        chatMode: targetMode
+                    });
+
+                    if (!response || response.status !== 'ok') {
+                        throw new Error(response?.error || '切换会话模式失败');
+                    }
+
+                    await applyChatModeUpdate(response.chatMode, false);
+                } catch (error) {
+                    console.error('切换会话模式失败:', error);
+                    updateChatModeUI(currentChatMode);
+                    addMessage('发生错误：' + error.message, false);
+                }
+            });
+        });
 
         // 添加复制功能
         function createCopyButton() {
@@ -1147,7 +1257,23 @@ async function initializeDialog(dialog) {
             userInput.value = '';
 
             try {
-                const pageContent = parseWebContent();
+                const meta = CHAT_MODE_META[currentChatMode] || {};
+                let pageContent = '';
+                if (meta.contextSource === 'full') {
+                    pageContent = parseWebContent();
+                } else if (meta.contextSource === 'selection') {
+                    const sel = (window.getSelection ? window.getSelection().toString().trim() : '') || pendingSelection || '';
+                    if (!sel) {
+                        isGenerating = false;
+                        userInput.disabled = false;
+                        askButton.disabled = false;
+                        askButton.classList.remove('generating');
+                        userInput.value = question; // 恢复输入
+                        addMessage('当前是"选中+临时"模式，请先在页面上选中一段文字再提问。', false);
+                        return;
+                    }
+                    pageContent = sel;
+                }
 
                 const prepare = await sendMessageWithRetry({
                     action: 'prepareGeneration',
@@ -1159,6 +1285,8 @@ async function initializeDialog(dialog) {
                 if (!prepare || prepare.status !== 'ok') {
                     throw new Error(prepare?.error || '当前无法开始新对话');
                 }
+
+                updateChatModeUI(prepare.chatMode || currentChatMode);
 
                 if (prepare.sessionReset) {
                     resetMessagesUI();
@@ -1224,7 +1352,21 @@ async function initializeDialog(dialog) {
                             // 保存Tokens计数到存储
                             chrome.storage.sync.set({ totalTokens });
                         } else if (msg.type === 'session-reset') {
+                            if (currentPort) {
+                                try {
+                                    currentPort.disconnect();
+                                } catch (error) {
+                                    console.debug('关闭端口失败:', error);
+                                }
+                                currentPort = null;
+                            }
+                            isGenerating = false;
+                            userInput.disabled = false;
+                            askButton.disabled = false;
+                            askButton.classList.remove('generating');
+                            updateChatModeUI(msg.chatMode || currentChatMode);
                             resetMessagesUI();
+                            await loadHistory();
                         } else if (msg.type === 'error') {
                             messageDiv.remove();
                             addMessage('发生错误：' + msg.error, false);
@@ -1272,16 +1414,230 @@ async function initializeDialog(dialog) {
         // 绑定事件
         askButton.addEventListener('click', handleUserInput);
         userInput.addEventListener('keydown', (e) => {
+            // 斜杠菜单激活时，优先拦截导航键
+            if (slashActive) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); moveSlashHighlight(1); return; }
+                if (e.key === 'ArrowUp')   { e.preventDefault(); moveSlashHighlight(-1); return; }
+                if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey)) {
+                    e.preventDefault();
+                    if (slashItems[slashHighlight]) applySlash(slashItems[slashHighlight]);
+                    return;
+                }
+                if (e.key === 'Escape') { e.preventDefault(); hideSlashMenu(); return; }
+            }
+
+            // Cmd/Ctrl + Enter 也发送（便于多行输入时确认）
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                handleUserInput();
+                return;
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 handleUserInput();
+                return;
+            }
+            if (e.key === 'Escape') {
+                // 生成中 -> 停止生成；否则关闭面板
+                e.preventDefault();
+                if (isGenerating) {
+                    void sendMessageWithRetry({
+                        action: 'stopGeneration',
+                        tabId,
+                        reason: 'user-esc'
+                    });
+                } else {
+                    dialog.classList.remove('show');
+                }
             }
         });
 
         userInput.addEventListener('input', () => {
             userInput.style.height = 'auto';
             userInput.style.height = Math.min(userInput.scrollHeight, 100) + 'px';
+            // 触发 @selection 识别：以 "@sel" 开头结尾空格或Tab时自动替换
+            maybeExpandSelectionMacro();
+            // 检查 /commands 菜单状态
+            maybeToggleSlashMenu();
         });
+
+        // ===== 选中文本引用 (selection chip) =====
+        const selectionChip = dialog.querySelector('#selectionChip');
+        const selectionChipText = selectionChip?.querySelector('.sel-text');
+        const selectionChipLen = selectionChip?.querySelector('.sel-len');
+        const selectionChipDismiss = selectionChip?.querySelector('.sel-dismiss');
+        let pendingSelection = '';
+
+        function updateSelectionChip() {
+            if (!selectionChip) return;
+            const sel = window.getSelection ? window.getSelection().toString().trim() : '';
+            // 忽略面板内部的选中（避免自选自用）
+            const anchor = window.getSelection?.().anchorNode;
+            const insidePanel = anchor && dialog.contains(anchor.nodeType === 1 ? anchor : anchor.parentElement);
+            if (!insidePanel && sel && sel.length >= 2) {
+                pendingSelection = sel;
+                selectionChipLen.textContent = `${sel.length} 字`;
+                selectionChip.hidden = false;
+            } else if (!pendingSelection) {
+                selectionChip.hidden = true;
+            }
+        }
+
+        document.addEventListener('selectionchange', updateSelectionChip);
+        // 打开面板或输入聚焦时刷新一次
+        userInput.addEventListener('focus', updateSelectionChip);
+
+        if (selectionChipDismiss) {
+            selectionChipDismiss.addEventListener('click', (e) => {
+                e.stopPropagation();
+                pendingSelection = '';
+                selectionChip.hidden = true;
+            });
+        }
+
+        // 点击 chip 主体把引文插到输入框
+        if (selectionChip) {
+            selectionChip.addEventListener('click', () => {
+                if (!pendingSelection) return;
+                insertQuoteIntoInput(pendingSelection);
+            });
+        }
+
+        function insertQuoteIntoInput(text) {
+            const quoted = text
+                .split(/\r?\n/)
+                .map((l) => `> ${l}`)
+                .join('\n');
+            const existing = userInput.value;
+            const prefix = existing.trim() ? `${existing.replace(/\s+$/, '')}\n\n` : '';
+            userInput.value = `${prefix}${quoted}\n\n`;
+            userInput.dispatchEvent(new Event('input'));
+            userInput.focus();
+            // 插入后清掉 chip（一次性引用）
+            pendingSelection = '';
+            if (selectionChip) selectionChip.hidden = true;
+            // 光标放到末尾
+            userInput.setSelectionRange(userInput.value.length, userInput.value.length);
+        }
+
+        // ===== /commands 提示词模板菜单 =====
+        const SLASH_TEMPLATES = [
+            { name: 'summarize', title: '五条要点总结',   prompt: '请用 5 条要点总结这篇内容。' },
+            { name: 'tldr',      title: 'TL;DR 一句话概括', prompt: '请用一句话概括核心观点（不超过 40 字）。' },
+            { name: 'translate-zh', title: '翻译为中文', prompt: '请把上述内容完整翻译成中文，保留原有的 Markdown/列表结构。' },
+            { name: 'translate-en', title: '翻译为英文', prompt: 'Please translate the above content into English, preserving the Markdown structure.' },
+            { name: 'explain',   title: '通俗讲解',       prompt: '请用通俗易懂的语言（面向初学者）解释上述内容，适当举例。' },
+            { name: 'outline',   title: '生成大纲',       prompt: '请为上述内容生成一个多层级的 Markdown 结构化大纲。' },
+            { name: 'keypoints', title: '抽取核心要点',   prompt: '请列出上述内容中 5-8 个关键信息点，用项目符号呈现。' },
+            { name: 'qa',        title: '出 5 道练习题', prompt: '基于上述内容出 5 道理解题，并在每题后给出参考答案。' },
+            { name: 'rewrite',   title: '改写更清晰',     prompt: '请改写上述内容，让表达更清晰凝练，保留原意。' },
+            { name: 'counter',   title: '反驳/质疑角度', prompt: '请从另一个角度反驳/质疑上述内容，列出 3-5 条潜在问题或反例。' }
+        ];
+
+        const slashMenu = dialog.querySelector('#slashMenu');
+        let slashActive = false;
+        let slashItems = [];
+        let slashHighlight = -1;
+
+        function maybeToggleSlashMenu() {
+            const v = userInput.value;
+            // 仅在整个输入形如 `/xxx`（没有空格/换行）时激活
+            const m = v.match(/^\/([\w-]*)$/);
+            if (m) {
+                renderSlashMenu(m[1]);
+            } else if (slashActive) {
+                hideSlashMenu();
+            }
+        }
+
+        function renderSlashMenu(filter) {
+            if (!slashMenu) return;
+            const f = (filter || '').toLowerCase();
+            const list = !f
+                ? SLASH_TEMPLATES.slice()
+                : SLASH_TEMPLATES.filter(t => t.name.toLowerCase().startsWith(f) || t.title.toLowerCase().includes(f));
+            if (!list.length) {
+                hideSlashMenu();
+                return;
+            }
+            slashMenu.innerHTML = '';
+            list.forEach((t, i) => {
+                const el = document.createElement('div');
+                el.className = 'slash-item' + (i === 0 ? ' highlight' : '');
+                el.dataset.idx = String(i);
+                el.setAttribute('role', 'option');
+                const cmd = document.createElement('span');
+                cmd.className = 'slash-cmd';
+                cmd.textContent = `/${t.name}`;
+                const title = document.createElement('span');
+                title.className = 'slash-title';
+                title.textContent = t.title;
+                el.appendChild(cmd);
+                el.appendChild(title);
+                // mousedown 而不是 click，避免 textarea 失焦后 selectionchange 改变状态
+                el.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    applySlash(list[i]);
+                });
+                slashMenu.appendChild(el);
+            });
+            slashItems = list;
+            slashHighlight = 0;
+            slashActive = true;
+            slashMenu.hidden = false;
+        }
+
+        function hideSlashMenu() {
+            slashActive = false;
+            slashHighlight = -1;
+            slashItems = [];
+            if (slashMenu) {
+                slashMenu.hidden = true;
+                slashMenu.innerHTML = '';
+            }
+        }
+
+        function moveSlashHighlight(delta) {
+            if (!slashActive || !slashItems.length) return;
+            slashHighlight = (slashHighlight + delta + slashItems.length) % slashItems.length;
+            Array.from(slashMenu.children).forEach((el, i) => {
+                el.classList.toggle('highlight', i === slashHighlight);
+            });
+            const el = slashMenu.children[slashHighlight];
+            if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+        }
+
+        function applySlash(template) {
+            if (!template) return;
+            userInput.value = template.prompt;
+            hideSlashMenu();
+            // 触发 input 事件以刷新高度等
+            userInput.dispatchEvent(new Event('input'));
+            userInput.focus();
+            userInput.setSelectionRange(userInput.value.length, userInput.value.length);
+        }
+
+        // 失焦关闭菜单
+        userInput.addEventListener('blur', () => {
+            // 延迟一点，让 mousedown 选中先执行
+            setTimeout(() => hideSlashMenu(), 120);
+        });
+
+        // 支持 "@sel" / "@selection" 文本宏：结尾空格/Tab 触发展开
+        function maybeExpandSelectionMacro() {
+            const v = userInput.value;
+            const m = v.match(/(^|\s)@(sel|selection)([\s\t])$/);
+            if (!m) return;
+            if (!pendingSelection) return;
+            const quoted = pendingSelection
+                .split(/\r?\n/)
+                .map((l) => `> ${l}`)
+                .join('\n');
+            userInput.value = v.slice(0, m.index + m[1].length) + quoted + m[3];
+            pendingSelection = '';
+            if (selectionChip) selectionChip.hidden = true;
+            userInput.setSelectionRange(userInput.value.length, userInput.value.length);
+        }
 
         // 从存储中加载Tokens计数
         chrome.storage.sync.get({ totalTokens: 0 }, (items) => {

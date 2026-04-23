@@ -212,3 +212,241 @@
 .switch input:checked+.slider:before {
     transform: translateX(20px);
 }
+
+body {
+    margin: 0;
+    min-width: 360px;
+    min-height: 480px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f5f5f5;
+    color: #333;
+}
+
+body .container {
+    display: flex;
+    flex-direction: column;
+    min-height: 480px;
+    background: #fff;
+}
+
+body .header {
+    display: flex !important;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid #ececec;
+    background: #fff;
+}
+
+body .session-mode-bar {
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid #f0f0f0;
+    background: #fafafa;
+}
+
+body .chat-mode-label {
+    display: block;
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 6px;
+}
+
+body .chat-mode-group {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    width: 100%;
+}
+
+body .chat-mode-btn {
+    appearance: none;
+    border: 1px solid #d9d9d9;
+    background: #fff;
+    color: #333;
+    border-radius: 10px;
+    padding: 7px 8px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+    user-select: none;
+    text-align: center;
+    line-height: 1.2;
+}
+
+body .chat-mode-btn:hover {
+    background: #f3f6fb;
+    border-color: #b9c6dc;
+}
+
+body .chat-mode-btn.active,
+body .chat-mode-btn[aria-pressed="true"] {
+    background: #007aff;
+    border-color: #007aff;
+    color: #fff;
+    box-shadow: 0 2px 6px rgba(0, 122, 255, 0.25);
+}
+
+body .chat-mode-btn:focus-visible {
+    outline: 2px solid #007aff;
+    outline-offset: 2px;
+}
+
+body .chat-mode-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #666;
+}
+
+body .chat-mode-hint.ephemeral {
+    color: #a65b00;
+}
+
+body .chat-mode-hint.persisted {
+    color: #0f6b44;
+}
+
+body .chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    background: #fff;
+}
+
+body .messages {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+body .welcome-message {
+    text-align: center;
+    color: #666;
+    padding: 10px;
+    margin-bottom: 10px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+body .message {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    word-wrap: break-word;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+body .user-message {
+    align-self: flex-end;
+    background: #007aff;
+    color: #fff;
+    border-radius: 12px 12px 2px 12px;
+}
+
+body .assistant-message {
+    align-self: flex-start;
+    background: #f0f0f0;
+    color: #111;
+    border-radius: 12px 12px 12px 2px;
+}
+
+body .assistant-message p {
+    margin: 0.4em 0;
+}
+
+body .assistant-message pre {
+    background: #f6f8fa;
+    border-radius: 6px;
+    padding: 10px;
+    overflow-x: auto;
+}
+
+body .assistant-message code {
+    background: #f3f3f3;
+    border-radius: 4px;
+    padding: 1px 4px;
+}
+
+body .typing-indicator {
+    display: inline-block;
+    padding: 4px 8px;
+}
+
+body .typing-indicator span {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin: 0 2px;
+    border-radius: 50%;
+    background: #90909090;
+    animation: popup-typing 1s infinite ease-in-out;
+}
+
+body .typing-indicator span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+body .typing-indicator span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+body .input-container {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid #ececec;
+    background: #fff;
+    align-items: flex-end;
+}
+
+body textarea {
+    flex: 1;
+    min-height: 36px;
+    max-height: 100px;
+    resize: none;
+    border: 1px solid #e5e7eb;
+    border-radius: 18px;
+    padding: 8px 12px;
+    font: inherit;
+    background: #f9fafb;
+    color: #333;
+}
+
+body textarea:focus {
+    outline: none;
+    border-color: #007aff;
+    background: #fff;
+}
+
+body #askButton {
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: #007aff;
+    color: #fff;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+}
+
+body #askButton::before {
+    content: "↑";
+    font-size: 20px;
+}
+
+body #askButton:disabled {
+    background: #d1d5db;
+    cursor: not-allowed;
+}
+
+@keyframes popup-typing {
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-4px);
+    }
+}

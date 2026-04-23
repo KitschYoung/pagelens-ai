@@ -24,32 +24,57 @@
     background-color: #0056b3;
 }
 
+/* 侧边栏模式：默认停靠右侧，整页高度，挤压网页内容 */
 #ai-assistant-dialog {
-    position: fixed;
-    right: 20px;
-    bottom: 80px;
-    width: min(400px, 90vw);
-    height: min(500px, 80vh);
-    min-width: 280px;
-    min-height: 300px;
+    position: fixed !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    right: 0 !important;
+    left: auto !important;
+    width: 420px;
+    height: 100vh !important;
+    min-width: 320px;
+    max-width: 90vw;
     background-color: white;
-    border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    border-radius: 0 !important;
+    box-shadow: -2px 0 16px rgba(0, 0, 0, 0.12);
+    border-left: 1px solid #e5e7eb;
+    border-right: none;
     z-index: 2147483645;
     overflow: hidden;
-    transform-origin: bottom right;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
+    transform: translateX(100%);
     opacity: 0;
-    transform: scale(0.3);
     pointer-events: none;
     visibility: hidden;
 }
 
+#ai-assistant-dialog[data-panel-side="left"] {
+    right: auto !important;
+    left: 0 !important;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.12);
+    border-left: none;
+    border-right: 1px solid #e5e7eb;
+    transform: translateX(-100%);
+}
+
 #ai-assistant-dialog.show {
+    transform: translateX(0);
     opacity: 1;
-    transform: scale(1);
     pointer-events: auto;
     visibility: visible;
+}
+
+/* 打开状态下挤压网页内容（宿主页面） */
+html.ai-assistant-panel-open {
+    box-sizing: border-box;
+}
+
+/* 面板打开时隐藏悬浮球，避免和面板重叠；关闭后自动恢复 */
+html.ai-assistant-panel-open .ball-container {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transition: opacity 0.15s ease !important;
 }
 
 /* 复制原有的popup.css中的样式，但修改选择器 */
@@ -69,7 +94,86 @@
     background-color: #fff;
     min-height: 0px;
     display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+
+#ai-assistant-dialog .header-main {
+    display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+#ai-assistant-dialog .chat-mode-control {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+    font-size: 12px;
+    color: #444;
+}
+
+#ai-assistant-dialog .chat-mode-label {
+    font-size: 11px;
+    color: #888;
+}
+
+#ai-assistant-dialog .chat-mode-group {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    width: 100%;
+}
+
+#ai-assistant-dialog .chat-mode-btn {
+    appearance: none !important;
+    border: 1px solid #d9d9d9 !important;
+    background: #fff !important;
+    color: #333 !important;
+    border-radius: 8px !important;
+    padding: 5px 6px !important;
+    font: inherit !important;
+    font-size: 12px !important;
+    line-height: 1.2 !important;
+    cursor: pointer !important;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease !important;
+    user-select: none !important;
+    text-align: center !important;
+    white-space: nowrap !important;
+}
+
+#ai-assistant-dialog .chat-mode-btn:hover {
+    background: #f3f6fb !important;
+    border-color: #b9c6dc !important;
+}
+
+#ai-assistant-dialog .chat-mode-btn.active,
+#ai-assistant-dialog .chat-mode-btn[aria-pressed="true"] {
+    background: #007aff !important;
+    border-color: #007aff !important;
+    color: #fff !important;
+    box-shadow: 0 2px 6px rgba(0, 122, 255, 0.25) !important;
+}
+
+#ai-assistant-dialog .chat-mode-btn:focus-visible {
+    outline: 2px solid #007aff !important;
+    outline-offset: 2px !important;
+}
+
+#ai-assistant-dialog .storage-mode-hint {
+    font-size: 12px;
+    color: #666;
+}
+
+#ai-assistant-dialog .storage-mode-hint.ephemeral {
+    color: #a65b00;
+}
+
+#ai-assistant-dialog .storage-mode-hint.persisted {
+    color: #0f6b44;
 }
 
 #ai-assistant-dialog .chat-container {
@@ -228,7 +332,9 @@
 #ai-assistant-dialog .input-container {
     position: relative !important;
     display: flex !important;
-    gap: 8px !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 6px !important;
     padding: 12px !important;
     background-color: white !important;
     border-top: 1px solid #F3F4F6 !important;
@@ -332,7 +438,28 @@
     padding: 8px 16px;
     border-bottom: 1px solid #eee;
     background-color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    color: #333;
 }
+
+#ai-assistant-dialog .header-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: #333;
+}
+
+#ai-assistant-dialog .tokens-counter {
+    font-size: 12px;
+    color: #666;
+    flex-shrink: 0;
+}
+
+/* 兼容：旧版 select 样式已移除，按钮组样式见上方 .chat-mode-group / .chat-mode-btn */
 
 #ai-assistant-dialog .toggle-ball {
     display: flex;
@@ -677,37 +804,179 @@
     opacity: 0.7 !important;
 }
 
-/* 调整大小的手柄样式 */
-#ai-assistant-dialog .resize-handle {
+/* 侧边栏宽度调节手柄：面板内侧边缘的一条竖向拖拽条 */
+#ai-assistant-dialog .resize-handle-panel {
     position: absolute !important;
-    width: 20px !important;
-    height: 20px !important;
-    right: 0 !important;
+    top: 0 !important;
     bottom: 0 !important;
-    cursor: se-resize !important;
+    width: 6px !important;
+    cursor: ew-resize !important;
+    background: transparent !important;
+    z-index: 2147483646 !important;
+    transition: background-color 0.15s ease !important;
+}
+
+/* 右停靠时手柄在面板左缘；左停靠时在右缘 */
+#ai-assistant-dialog[data-panel-side="right"] .resize-handle-panel {
+    left: 0 !important;
+}
+#ai-assistant-dialog[data-panel-side="left"] .resize-handle-panel {
+    right: 0 !important;
+}
+
+#ai-assistant-dialog .resize-handle-panel:hover,
+#ai-assistant-dialog .resize-handle-panel:active {
+    background: rgba(0, 122, 255, 0.25) !important;
+}
+
+/* 头部右侧的面板操作按钮（切换左右、关闭） */
+#ai-assistant-dialog .panel-actions {
     display: flex !important;
     align-items: center !important;
+    gap: 4px !important;
+    flex-shrink: 0 !important;
+}
+
+#ai-assistant-dialog .panel-side-switch,
+#ai-assistant-dialog .panel-close,
+#ai-assistant-dialog .panel-clear,
+#ai-assistant-dialog .panel-width-cycle {
+    width: 26px !important;
+    height: 26px !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    color: #666 !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    font-size: 14px !important;
+    line-height: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
     justify-content: center !important;
-    z-index: 2147483645 !important;
+    transition: background-color 0.15s ease, color 0.15s ease !important;
 }
 
-/* 调整手柄的图标 */
-#ai-assistant-dialog .resize-handle::before {
-    content: "" !important;
-    width: 8px !important;
-    height: 8px !important;
-    border-right: 2px solid #999 !important;
-    border-bottom: 2px solid #999 !important;
+#ai-assistant-dialog .panel-side-switch:hover,
+#ai-assistant-dialog .panel-close:hover,
+#ai-assistant-dialog .panel-clear:hover,
+#ai-assistant-dialog .panel-width-cycle:hover {
+    background: #eef2f7 !important;
+    color: #111 !important;
+}
+
+#ai-assistant-dialog .panel-close {
+    font-size: 20px !important;
+}
+
+/* /commands 提示词模板菜单 */
+#ai-assistant-dialog .slash-menu {
     position: absolute !important;
-    right: 4px !important;
-    bottom: 4px !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: calc(100% + 6px) !important;
+    max-height: 240px !important;
+    overflow-y: auto !important;
+    background: #fff !important;
+    border: 1px solid #dbe2ec !important;
+    border-radius: 10px !important;
+    box-shadow: 0 6px 24px rgba(15, 23, 42, 0.12) !important;
+    padding: 4px !important;
+    z-index: 2147483647 !important;
 }
 
-/* 确保对话框可以调整大小 */
+#ai-assistant-dialog .slash-menu[hidden] {
+    display: none !important;
+}
+
+#ai-assistant-dialog .slash-item {
+    display: flex !important;
+    align-items: center !important;
+    gap: 10px !important;
+    padding: 6px 10px !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    font-size: 12px !important;
+    color: #1f2937 !important;
+    user-select: none !important;
+    transition: background 0.1s ease !important;
+}
+
+#ai-assistant-dialog .slash-item:hover,
+#ai-assistant-dialog .slash-item.highlight {
+    background: #eef5ff !important;
+    color: #1e4fa5 !important;
+}
+
+#ai-assistant-dialog .slash-item .slash-cmd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+    font-size: 12px !important;
+    color: #2563eb !important;
+    min-width: 104px !important;
+    flex-shrink: 0 !important;
+}
+
+#ai-assistant-dialog .slash-item .slash-title {
+    color: inherit !important;
+}
+
+/* 选中文本引用 chip */
+#ai-assistant-dialog .selection-chip {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    margin: 0 0 6px 0 !important;
+    padding: 4px 10px !important;
+    border-radius: 999px !important;
+    background: #eef5ff !important;
+    border: 1px solid #c9dcff !important;
+    color: #1e4fa5 !important;
+    font-size: 12px !important;
+    cursor: pointer !important;
+    max-width: 100% !important;
+    width: fit-content !important;
+    user-select: none !important;
+    transition: background 0.15s ease, border-color 0.15s ease !important;
+}
+
+#ai-assistant-dialog .selection-chip[hidden] {
+    display: none !important;
+}
+
+#ai-assistant-dialog .selection-chip:hover {
+    background: #dce8ff !important;
+    border-color: #8eb3f2 !important;
+}
+
+#ai-assistant-dialog .selection-chip .sel-icon {
+    font-size: 15px !important;
+    line-height: 1 !important;
+    color: #5a87d0 !important;
+}
+
+#ai-assistant-dialog .selection-chip .sel-len {
+    font-variant-numeric: tabular-nums !important;
+    color: #3a6fc4 !important;
+}
+
+#ai-assistant-dialog .selection-chip .sel-dismiss {
+    margin-left: 4px !important;
+    padding: 0 4px !important;
+    border-radius: 4px !important;
+    font-size: 14px !important;
+    color: #6b86b8 !important;
+    cursor: pointer !important;
+}
+
+#ai-assistant-dialog .selection-chip .sel-dismiss:hover {
+    background: rgba(0, 0, 0, 0.06) !important;
+    color: #1b2a4e !important;
+}
+
+/* 对话框尺寸约束（侧边栏模式） */
 #ai-assistant-dialog {
     resize: none !important;
-    min-width: 300px !important;
-    min-height: 400px !important;
+    min-width: 320px !important;
 }
 
 /* 用户消息中的Markdown样式 */

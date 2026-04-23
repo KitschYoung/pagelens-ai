@@ -65,11 +65,63 @@ def render_messages(messages: list[dict[str, Any]]) -> str:
     return "\n\n".join(sections)
 
 
+def render_turns(turns: list[dict[str, Any]]) -> str:
+    sections: list[str] = []
+
+    for index, turn in enumerate(turns, start=1):
+        if turn.get("type") == "gap":
+            sections.append(
+                "\n".join(
+                    [
+                        f"### {index}. 日志说明",
+                        "",
+                        turn.get("note", "中间存在未入库回合，已省略。"),
+                    ]
+                )
+            )
+            continue
+
+        messages = turn.get("messages", [])
+        page_snapshot = turn.get("pageSnapshot") or {}
+        lines = [f"### {index}. 回合"]
+
+        if turn.get("chatMode"):
+            lines.extend(["", f"- 模式: `{turn['chatMode']}`"])
+
+        if page_snapshot.get("title") or page_snapshot.get("url") or page_snapshot.get("excerpt"):
+            lines.extend(["", "#### 页面快照"])
+            if page_snapshot.get("title"):
+                lines.append(f"- 标题: {page_snapshot['title']}")
+            if page_snapshot.get("url"):
+                lines.append(f"- 地址: {page_snapshot['url']}")
+            if page_snapshot.get("domain"):
+                lines.append(f"- 域名: `{page_snapshot['domain']}`")
+            if page_snapshot.get("excerpt"):
+                lines.extend(["", "```text", page_snapshot["excerpt"], "```"])
+
+        for message in messages:
+            role = message.get("role", "assistant")
+            content = (message.get("content") or "").strip() or "_空消息_"
+            lines.extend(
+                [
+                    "",
+                    f"#### {message_heading(role)}",
+                    "",
+                    content,
+                ]
+            )
+
+        sections.append("\n".join(lines))
+
+    return "\n\n".join(sections)
+
+
 def build_markdown(payload: dict[str, Any], output_file: Path) -> str:
     session = payload["session"]
     page = session.get("page", {})
     assistant = session.get("assistant", {})
     messages = session.get("messages", [])
+    turns = session.get("turns", [])
     title = page.get("title") or "未命名页面"
     session_id = session.get("sessionId", "unknown-session")
     started_at = session.get("startedAt", "")
@@ -89,9 +141,6 @@ def build_markdown(payload: dict[str, Any], output_file: Path) -> str:
         f"updated_at: {yaml_quote(updated_at)}",
         f"saved_at: {yaml_quote(saved_at)}",
         f"status: {yaml_quote(session.get('status', 'completed'))}",
-        f"page_title: {yaml_quote(title)}",
-        f"page_url: {yaml_quote(page.get('url') or '')}",
-        f"page_domain: {yaml_quote(page.get('domain') or '')}",
         f"model: {yaml_quote(assistant.get('model') or '')}",
         f"api_type: {yaml_quote(assistant.get('apiType') or '')}",
         f"turn_count: {session.get('turnCount', 0)}",
@@ -105,6 +154,13 @@ def build_markdown(payload: dict[str, Any], output_file: Path) -> str:
         "",
     ]
 
+    if page.get("title"):
+        frontmatter.insert(10, f"page_title: {yaml_quote(page.get('title') or '')}")
+    if page.get("url"):
+        frontmatter.insert(11, f"page_url: {yaml_quote(page.get('url') or '')}")
+    if page.get("domain"):
+        frontmatter.insert(12, f"page_domain: {yaml_quote(page.get('domain') or '')}")
+
     metadata_lines = [
         f"# 灵思会话日志｜{title}",
         "",
@@ -115,20 +171,26 @@ def build_markdown(payload: dict[str, Any], output_file: Path) -> str:
         f"- 最近更新: `{updated_at}`" if updated_at else "- 最近更新: `unknown`",
         f"- 最近保存: `{saved_at}`" if saved_at else "- 最近保存: `unknown`",
         f"- 状态: `{session.get('status', 'completed')}`",
-        f"- 页面标题: {title}",
-        f"- 页面地址: {page.get('url') or 'unknown'}",
-        f"- 页面域名: `{page.get('domain') or 'unknown'}`",
         f"- 模型: `{assistant.get('model') or 'unknown'}`",
         f"- API 类型: `{assistant.get('apiType') or 'unknown'}`",
         f"- 上下文对话: `{assistant.get('enableContext', False)}`",
         f"- 上下文轮数: `{assistant.get('maxContextRounds', 0)}`",
         f"- 输出文件: `{relative_output}`",
-        "",
-        "## 页面上下文",
-        "",
-        f"- 页面文本长度: `{page.get('contentLength', 0)}`",
-        "",
     ]
+
+    if page.get("title") or page.get("url") or page.get("domain"):
+        metadata_lines.extend(
+            [
+                f"- 页面标题: {title}",
+                f"- 页面地址: {page.get('url') or 'unknown'}",
+                f"- 页面域名: `{page.get('domain') or 'unknown'}`",
+                "",
+                "## 页面上下文",
+                "",
+                f"- 页面文本长度: `{page.get('contentLength', 0)}`",
+                "",
+            ]
+        )
 
     if excerpt:
         metadata_lines.extend(
@@ -139,7 +201,7 @@ def build_markdown(payload: dict[str, Any], output_file: Path) -> str:
                 "",
             ]
         )
-    else:
+    elif page.get("title") or page.get("url") or page.get("domain"):
         metadata_lines.append("_页面未提供可用文本摘录_")
         metadata_lines.append("")
 
@@ -147,7 +209,7 @@ def build_markdown(payload: dict[str, Any], output_file: Path) -> str:
         [
             "## 对话全文",
             "",
-            render_messages(messages),
+            render_turns(turns) if turns else render_messages(messages),
             "",
             "## 原始会话摘要",
             "",
@@ -178,7 +240,7 @@ def build_output_file(payload: dict[str, Any], default_output_dir: Path) -> Path
     output_dir.mkdir(parents=True, exist_ok=True)
 
     started_date = safe_iso_date(session.get("startedAt"))
-    domain = slugify(page.get("domain") or "page") or "page"
+    domain = slugify(page.get("domain") or "chat") or "chat"
     title = slugify(page.get("title") or "session")[:48] or "session"
     session_id = session.get("sessionId", "session")
 

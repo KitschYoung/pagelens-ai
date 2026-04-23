@@ -30,6 +30,15 @@
     "background": {
         "service_worker": "background.js"
     },
+    "commands": {
+        "toggle-panel": {
+            "suggested_key": {
+                "default": "Ctrl+Shift+K",
+                "mac": "Command+Shift+K"
+            },
+            "description": "打开/关闭 WebChat 侧边面板"
+        }
+    },
     "options_page": "options/options.html",
     "content_scripts": [
         {
@@ -38,6 +47,7 @@
             ],
             "js": [
                 "lib/marked.min.js",
+                "shared/chatModes.js",
                 "content.js"
             ],
             "css": [
