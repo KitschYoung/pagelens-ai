@@ -17,7 +17,7 @@ PageLens AI 是一个 Chrome Manifest V3 扩展，用侧边面板和悬浮球把
 
 ## 安装
 
-1. 下载代码：`git clone https://github.com/KitschYoung/webchat.git`
+1. 下载代码：`git clone https://github.com/KitschYoung/pagelens-ai.git`
 2. 打开 `chrome://extensions/`
 3. 开启“开发者模式”
 4. 点击“加载已解压的扩展程序”
