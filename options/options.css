@@ -102,6 +102,53 @@ input[type="text"] {
     font-size: 14px;
 }
 
+.floating-icon-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.floating-icon-preview {
+    width: 58px;
+    height: 58px;
+    border: 6px solid #fff;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #ff8fb4 0%, #f36a9c 100%);
+    box-shadow: 0 8px 24px rgba(244, 111, 159, 0.24), 0 2px 8px rgba(0, 0, 0, 0.12);
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.floating-icon-preview svg,
+.floating-icon-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.floating-icon-preview svg {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+    display: block;
+}
+
+.floating-icon-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+
+.floating-icon-actions input[type="file"] {
+    max-width: 100%;
+}
+
 .switch-label {
     display: flex;
     align-items: center;
@@ -425,48 +472,121 @@ input[type="number"].invalid {
     border-radius: 10px;
 }
 
-.mentor-prompt-ite
-/* ===== 学习带教模式提示词编辑器 ===== */
-.mentor-promor:.mentor-prompt-item {
+.mentor-prompt-item .mp-state[data-state="custom"] {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.mentor-prompt-item .mp-state[data-state="default"] {
+    background: #f1f5f9;
+    color: #475569;
+}
+
+.mentor-prompt-item .mp-body {
+    padding: 10px 14px 14px;
+    border-top: 1px solid #eef0f2;
+    background: #fff;
+}
+
+.mentor-prompt-item textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.55;
+    resize: vertical;
+}
+
+.mentor-prompt-item textarea:focus {
+    outline: none;
+    border-color: #4CAF50;
+    box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.15);
+}
+
+.mentor-prompt-item .mp-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+/* ===== Slash 指令编辑器 ===== */
+.slash-cmd-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
     margin-bottom: 10px;
-    te="    margin-bottom: 1ro    border: 1px solid #:     border-radius: 8px;
-    bem    background: #fafafg:    overflow: hidden;
-}rd}
-
-.mentor-prompt-it5e7eb    list-style: none;
-    cursnt    cursor: pointer;od    padding: 10px 1dt    display: flex;
-   g:    align-items: fo    gap: 10px;
-    fonten    font-weig m    user-select: nosiz}
-
-.mentor-prompt-iteeight    display: none;
 }
 
-.mentor-prompt-item > summaryd #d1}
-
-.me    border-radiu    content: "▶";
-    font-size: 10pin    font-;
-    white    color: #9ca3af;
-
-    transitmpt-item }
-
-.mentor-prompt-item[open] > {
-       transform: rotate(90deg);
+.slash-cmd-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    background: #fff;
+    padding: 10px 12px;
 }
 
-.mentor-p;
-}
-}
-
-.mentor-prompt-item .mp-iions     font-size: 16px;
-}
-
-.mentis}
-
-.mentor-prompt-i: 8px    flex: 1;
+.slash-cmd-item .sc-row1 {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
 }
 
-.mentor-promptto}
+.slash-cmd-item .sc-slash {
+    color: #9ca3af;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-weight: 600;
+}
 
-.mentor-em .m    font-size: 11px;
-    font-ze    font-weight: 50:     padx;
+.slash-cmd-item input[type="text"] {
+    padding: 6px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 5px;
+    font-size: 13px;
+    min-width: 0;
+}
+
+.slash-cmd-item input.sc-name {
+    flex: 0 0 160px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.slash-cmd-item input.sc-title {
+    flex: 1;
+}
+
+.slash-cmd-item textarea.sc-prompt {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 5px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    resize: vertical;
+}
+
+.slash-cmd-item .sc-del {
+    flex-shrink: 0;
+    padding: 4px 10px;
+    background: #fee2e2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.slash-cmd-item .sc-del:hover {
+    background: #fecaca;
+}
+
+.slash-cmd-toolbar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }

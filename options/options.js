@@ -26,6 +26,15 @@ const API_CONFIGS = {
     }
 };
 
+const FLOATING_ICON_MAX_BYTES = 5 * 1024 * 1024;
+const DEFAULT_FLOATING_ICON_SVG = `
+    <svg class="icon" width="24" height="24" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+        <path d="M200 935.744a39.517867 39.517867 0 0 1-14.122667-7.185067c-12.906667-10.295467-18.602667-27.2896-14.741333-43.4688a1295.863467 1295.863467 0 0 0 17.207467-520c-5.6448-33.216 0.418133-66.760533 17.5488-96.443733 17.156267-29.563733 43.498667-51.648 75.656533-60.497067h0.008533l417.591467-114.24c66.0352-19.434667 144.533333 49.792 162.602667 156.258134a1978.666667 1978.666667 0 0 1 27.144533 397.806933c-3.4432 107.592533-71.6928 186.248533-139.758933 176.008533l-64.823467-8.494933c-22.203733-3.042133-36.8768-29.952-33.8944-60.1984 3.008-30.2336 22.664533-53.713067 45.038933-52.343467 21.7472 1.463467 43.485867 2.922667 65.233067 4.3776 24.170667 1.783467 45.969067-26.0096 47.133867-62.007466a1897.941333 1897.941333 0 0 0-26.030934-381.499734c-6.062933-35.618133-31.466667-60.3136-55.168-55.2576l-424.0128 87.466667c-11.4176 2.363733-21.1584 9.570133-27.6096 20.078933-6.4512 10.530133-8.802133 22.993067-6.698666 35.345067a1377.0368 1377.0368 0 0 1 2.346666 449.117867 1341.696 1341.696 0 0 0 118.4512-104.448c8.251733-8.1792 18.862933-12.475733 29.602134-11.758934l293.009066 19.6736c22.340267 1.365333 38.839467 28.650667 35.639467 60.842667-3.1744 32.200533-24.704 55.765333-46.882133 52.7232l-274.5216-35.972267c-62.229333 57.1136-127.6544 106.965333-194.973867 149.384534-9.629867 6.071467-20.8 7.522133-30.976 4.731733z" fill="white"></path>
+        <path d="M635.733333 488.533333m-59.733333 0a59.733333 59.733333 0 1 0 119.466667 0 59.733333 59.733333 0 1 0-119.466667 0Z" fill="white"></path>
+        <path d="M460.864 507.733333m-50.133333 0a50.133333 50.133333 0 1 0 100.266666 0 50.133333 50.133333 0 1 0-100.266666 0Z" fill="white"></path>
+    </svg>
+`;
+
 // 校验字符串是否全为可用作 HTTP header 的 ASCII（排除控制字符）
 function assertHeaderSafe(value, fieldName) {
     if (!value) return;
@@ -262,6 +271,23 @@ function showStatus(message, type = 'success') {
     }
 }
 
+function setFloatingIconPreview(dataUrl) {
+    const preview = document.getElementById('floatingIconPreview');
+    if (!preview) return;
+    preview.innerHTML = dataUrl
+        ? `<img src="${dataUrl}" alt="">`
+        : DEFAULT_FLOATING_ICON_SVG;
+}
+
+function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('读取图片失败'));
+        reader.readAsDataURL(file);
+    });
+}
+
 // 验证设置
 function validateSettings(settings) {
     const config = API_CONFIGS[settings.apiType];
@@ -461,8 +487,8 @@ function loadOptions() {
         ollama_model: API_CONFIGS.ollama.modelPlaceholder,
         enableSessionLogging: true,
         sessionLogEndpoint: 'http://127.0.0.1:8765/log-session',
-        sessionLogOutputDir: '~/webchat-session-logs',
-        sessionLogWorkspaceRoot: '~/webchat-workspace',
+        sessionLogOutputDir: '~/pagelens-session-logs',
+        sessionLogWorkspaceRoot: '~/pagelens-workspace',
         sessionIdleMinutes: 30
     }, (items) => {
         document.getElementById('apiType').value = items.apiType;
@@ -506,7 +532,8 @@ const DEFAULT_SETTINGS = {
     sessionLogOutputDir: '',
     sessionLogWorkspaceRoot: '',
     sessionIdleMinutes: 30,
-    mentorPrompts: {}
+    mentorPrompts: {},
+    mentorLabels: {}
 };
 
 // 修改还原设置函数
@@ -534,6 +561,8 @@ async function resetOptions() {
         document.getElementById('sessionLogWorkspaceRoot').value = DEFAULT_SETTINGS.sessionLogWorkspaceRoot;
         document.getElementById('sessionIdleMinutes').value = DEFAULT_SETTINGS.sessionIdleMinutes;
         document.getElementById('sessionLogSettings').style.display = 'block';
+        await chrome.storage.local.remove('floatingIconDataUrl');
+        setFloatingIconPreview('');
         updateMaxTokensDisplay(DEFAULT_SETTINGS.maxTokens);
         updateTemperatureDisplay(DEFAULT_SETTINGS.temperature);
 
@@ -598,6 +627,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const sessionLogOutputDir = document.getElementById('sessionLogOutputDir');
     const sessionLogWorkspaceRoot = document.getElementById('sessionLogWorkspaceRoot');
     const sessionIdleMinutes = document.getElementById('sessionIdleMinutes');
+    const floatingIconUpload = document.getElementById('floatingIconUpload');
+    const clearFloatingIcon = document.getElementById('clearFloatingIcon');
 
     apiType.addEventListener('change', (e) => {
         updateApiTypeUI(e.target.value);
@@ -706,6 +737,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         contextSettings.style.display = items.enableContext ? 'block' : 'none';
     });
 
+    chrome.storage.local.get({ floatingIconDataUrl: '' }, ({ floatingIconDataUrl }) => {
+        setFloatingIconPreview(floatingIconDataUrl);
+    });
+
     enableContext.addEventListener('change', () => {
         const isEnabled = enableContext.checked;
         contextSettings.style.display = isEnabled ? 'block' : 'none';
@@ -775,8 +810,48 @@ document.addEventListener('DOMContentLoaded', async () => {
         debounceSave(autoHideDialog.checked);
     });
 
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes.floatingIconDataUrl) {
+            setFloatingIconPreview(changes.floatingIconDataUrl.newValue || '');
+        }
+    });
+
+    floatingIconUpload.addEventListener('change', async () => {
+        const file = floatingIconUpload.files && floatingIconUpload.files[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) {
+            showStatus('请选择图片文件', 'error');
+            floatingIconUpload.value = '';
+            return;
+        }
+        if (file.size > FLOATING_ICON_MAX_BYTES) {
+            showStatus('图片文件不能超过 5 MB', 'error');
+            floatingIconUpload.value = '';
+            return;
+        }
+        try {
+            const dataUrl = await fileToDataUrl(file);
+            await chrome.storage.local.set({ floatingIconDataUrl: dataUrl });
+            setFloatingIconPreview(dataUrl);
+            showStatus('悬浮球图案已更新');
+        } catch (error) {
+            showStatus(error.message, 'error');
+        } finally {
+            floatingIconUpload.value = '';
+        }
+    });
+
+    clearFloatingIcon.addEventListener('click', async () => {
+        await chrome.storage.local.remove('floatingIconDataUrl');
+        setFloatingIconPreview('');
+        showStatus('已恢复默认悬浮球图案');
+    });
+
     // ===== 学习带教模式提示词编辑器 =====
     initMentorPromptsEditor();
+
+    // ===== Slash 指令编辑器 =====
+    initSlashCommandsEditor();
 });
 
 function initMentorPromptsEditor() {
@@ -793,26 +868,32 @@ function initMentorPromptsEditor() {
         (f) => f !== MentorAPI.MENTOR_FLAVORS.OFF
     );
 
-    chrome.storage.sync.get({ mentorPrompts: {} }, ({ mentorPrompts }) => {
+    chrome.storage.sync.get({ mentorPrompts: {}, mentorLabels: {} }, ({ mentorPrompts, mentorLabels }) => {
         const overrides = mentorPrompts || {};
+        const labelOverrides = mentorLabels || {};
         const saveTimers = {};
+        const labelSaveTimers = {};
 
         flavors.forEach((flavor) => {
             const meta = MentorAPI.MENTOR_META[flavor];
             const defaultPrompt = MentorAPI.getDefaultMentorPrompt(flavor);
             const currentValue = typeof overrides[flavor] === 'string' ? overrides[flavor] : '';
             const isOverridden = Boolean(currentValue && currentValue.trim());
+            const isCustom = MentorAPI.isCustomMentorSlot && MentorAPI.isCustomMentorSlot(flavor);
+            const currentLabel = typeof labelOverrides[flavor] === 'string' ? labelOverrides[flavor] : '';
+            const effectiveLabel = currentLabel.trim() || meta.label;
 
             const wrap = document.createElement('details');
             wrap.className = 'mentor-prompt-item';
-            wrap.open = isOverridden; // 已自定义的默认展开
+            // 已自定义 or 是空白自定义槽位的都默认展开，方便用户编辑
+            wrap.open = isOverridden || isCustom;
 
             const summary = document.createElement('summary');
             summary.innerHTML = `
                 <span class="mp-icon">${meta.icon}</span>
-                <span class="mp-label">${meta.label}</span>
+                <span class="mp-label">${effectiveLabel}</span>
                 <span class="mp-state" data-state="${isOverridden ? 'custom' : 'default'}">${
-                    isOverridden ? '已自定义' : '使用默认'
+                    isOverridden ? '已自定义' : (isCustom ? '空槽位' : '使用默认')
                 }</span>
             `;
             wrap.appendChild(summary);
@@ -825,9 +906,28 @@ function initMentorPromptsEditor() {
             hint.textContent = meta.hint;
             body.appendChild(hint);
 
+            // 仅自定义槽位显示"名称"编辑框（覆盖 meta.label 的显示名）
+            let labelInput = null;
+            if (isCustom) {
+                const labelRow = document.createElement('div');
+                labelRow.className = 'mp-label-row';
+                labelRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin:4px 0 8px;';
+                const labelLbl = document.createElement('label');
+                labelLbl.textContent = '显示名称：';
+                labelLbl.style.cssText = 'font-size:12px;color:#555;flex-shrink:0;';
+                labelInput = document.createElement('input');
+                labelInput.type = 'text';
+                labelInput.placeholder = meta.label;
+                labelInput.value = currentLabel;
+                labelInput.style.cssText = 'flex:1;padding:4px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;';
+                labelRow.appendChild(labelLbl);
+                labelRow.appendChild(labelInput);
+                body.appendChild(labelRow);
+            }
+
             const textarea = document.createElement('textarea');
             textarea.rows = 12;
-            textarea.placeholder = defaultPrompt;
+            textarea.placeholder = defaultPrompt || '在这里填入你的自定义系统提示词...';
             textarea.value = currentValue;
             textarea.spellcheck = false;
             body.appendChild(textarea);
@@ -876,13 +976,16 @@ function initMentorPromptsEditor() {
             container.appendChild(wrap);
 
             const stateBadge = summary.querySelector('.mp-state');
+            const labelBadge = summary.querySelector('.mp-label');
             function refreshState() {
                 const custom = Boolean(textarea.value && textarea.value.trim());
                 stateBadge.dataset.state = custom ? 'custom' : 'default';
-                stateBadge.textContent = custom ? '已自定义' : '使用默认';
+                stateBadge.textContent = custom
+                    ? '已自定义'
+                    : (isCustom ? '空槽位' : '使用默认');
             }
 
-            // 1 秒防抖保存
+            // 提示词：1 秒防抖保存
             textarea.addEventListener('input', () => {
                 refreshState();
                 if (saveTimers[flavor]) clearTimeout(saveTimers[flavor]);
@@ -899,6 +1002,187 @@ function initMentorPromptsEditor() {
                     });
                 }, 800);
             });
+
+            // 显示名称：同样 1 秒防抖保存到 mentorLabels
+            if (labelInput) {
+                labelInput.addEventListener('input', () => {
+                    if (labelBadge) {
+                        labelBadge.textContent = labelInput.value.trim() || meta.label;
+                    }
+                    if (labelSaveTimers[flavor]) clearTimeout(labelSaveTimers[flavor]);
+                    labelSaveTimers[flavor] = setTimeout(() => {
+                        chrome.storage.sync.get({ mentorLabels: {} }, ({ mentorLabels }) => {
+                            const next = { ...(mentorLabels || {}) };
+                            const v = (labelInput.value || '').trim();
+                            if (v) {
+                                next[flavor] = v;
+                            } else {
+                                delete next[flavor];
+                            }
+                            chrome.storage.sync.set({ mentorLabels: next });
+                        });
+                    }, 800);
+                });
+            }
         });
+    });
+}
+
+// ===== Slash 指令编辑器 =====
+function initSlashCommandsEditor() {
+    const container = document.getElementById('slashCommandsContainer');
+    const addBtn = document.getElementById('addSlashCmd');
+    const resetBtn = document.getElementById('resetSlashCmd');
+    if (!container || !addBtn || !resetBtn) return;
+
+    const SlashAPI = self.WebChatSlash;
+    if (!SlashAPI) {
+        container.textContent = '⚠️ Slash 指令模块未加载';
+        return;
+    }
+
+    const NAME_RE = /^[\w-]+$/;
+    let saveTimer = null;
+    // 内存中的工作副本（可以包含暂时不合法的条目，比如空 name）
+    let items = [];
+
+    function scheduleSave() {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+            const normalized = SlashAPI.normalizeSlashCommands(items);
+            chrome.storage.sync.set({ slashCommands: normalized });
+        }, 500);
+    }
+
+    function validateItem(item) {
+        const errs = [];
+        const name = String(item.name || '').trim();
+        const prompt = String(item.prompt || '');
+        if (!name) errs.push('指令名为空');
+        else if (!NAME_RE.test(name)) errs.push('指令名只能包含字母/数字/下划线/连字符');
+        if (!prompt.trim()) errs.push('提示词为空');
+        return errs;
+    }
+
+    function render() {
+        container.innerHTML = '';
+        if (items.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'help-text';
+            empty.style.cssText = 'padding:14px;text-align:center;color:#9ca3af;';
+            empty.textContent = '暂无指令。点击下方"新增指令"添加。';
+            container.appendChild(empty);
+            return;
+        }
+        // 重名集合
+        const nameCount = {};
+        items.forEach((it) => {
+            const n = String(it.name || '').trim();
+            if (n) nameCount[n] = (nameCount[n] || 0) + 1;
+        });
+
+        items.forEach((item, idx) => {
+            const wrap = document.createElement('div');
+            wrap.className = 'slash-cmd-item';
+
+            const row1 = document.createElement('div');
+            row1.className = 'sc-row1';
+
+            const slash = document.createElement('span');
+            slash.className = 'sc-slash';
+            slash.textContent = '/';
+            row1.appendChild(slash);
+
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.className = 'sc-name';
+            nameInput.placeholder = 'summarize';
+            nameInput.value = item.name || '';
+            nameInput.addEventListener('input', () => {
+                items[idx].name = nameInput.value;
+                updateErr();
+                scheduleSave();
+            });
+            row1.appendChild(nameInput);
+
+            const titleInput = document.createElement('input');
+            titleInput.type = 'text';
+            titleInput.className = 'sc-title';
+            titleInput.placeholder = '显示名称（可留空，默认用指令名）';
+            titleInput.value = item.title || '';
+            titleInput.addEventListener('input', () => {
+                items[idx].title = titleInput.value;
+                scheduleSave();
+            });
+            row1.appendChild(titleInput);
+
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'sc-del';
+            del.textContent = '删除';
+            del.addEventListener('click', () => {
+                if (!confirm(`确认删除指令 /${item.name || '(未命名)'} 吗？`)) return;
+                items.splice(idx, 1);
+                render();
+                scheduleSave();
+            });
+            row1.appendChild(del);
+
+            wrap.appendChild(row1);
+
+            const prompt = document.createElement('textarea');
+            prompt.className = 'sc-prompt';
+            prompt.rows = 3;
+            prompt.placeholder = '选中指令后灌入输入框的提示词';
+            prompt.value = item.prompt || '';
+            prompt.addEventListener('input', () => {
+                items[idx].prompt = prompt.value;
+                updateErr();
+                scheduleSave();
+            });
+            wrap.appendChild(prompt);
+
+            const errBox = document.createElement('div');
+            errBox.className = 'help-text';
+            errBox.style.cssText = 'color:#b91c1c;margin-top:6px;min-height:16px;';
+            wrap.appendChild(errBox);
+
+            function updateErr() {
+                const errs = validateItem(items[idx]);
+                const nm = String(items[idx].name || '').trim();
+                if (nm && nameCount[nm] > 1) {
+                    errs.push(`指令名重复（与其他条目同名：/${nm}）`);
+                }
+                errBox.textContent = errs.length ? '⚠ ' + errs.join('；') : '';
+            }
+            updateErr();
+
+            container.appendChild(wrap);
+        });
+    }
+
+    addBtn.addEventListener('click', () => {
+        items.push({ name: '', title: '', prompt: '' });
+        render();
+        // 聚焦到新加的 name 输入
+        const last = container.querySelector('.slash-cmd-item:last-child .sc-name');
+        if (last) last.focus();
+    });
+
+    resetBtn.addEventListener('click', () => {
+        if (!confirm('确认还原到默认指令列表？当前自定义内容将被覆盖。')) return;
+        items = SlashAPI.DEFAULT_SLASH_COMMANDS.map((c) => ({ ...c }));
+        render();
+        scheduleSave();
+    });
+
+    // 初次加载：如果没有存储，使用默认
+    chrome.storage.sync.get({ slashCommands: null }, ({ slashCommands }) => {
+        if (Array.isArray(slashCommands) && slashCommands.length > 0) {
+            items = SlashAPI.normalizeSlashCommands(slashCommands).map((c) => ({ ...c }));
+        } else {
+            items = SlashAPI.DEFAULT_SLASH_COMMANDS.map((c) => ({ ...c }));
+        }
+        render();
     });
 }

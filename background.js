@@ -20,13 +20,17 @@ const DEFAULT_SETTINGS = {
     sessionLogOutputDir: '',
     sessionLogWorkspaceRoot: '',
     sessionIdleMinutes: 30,
-    mentorPrompts: {}
+    mentorPrompts: {},
+    mentorLabels: {}
 };
 
 const STORAGE_KEYS = {
     sessions: 'webchat_sessions_v5',
     pendingLogs: 'webchat_pending_logs_v2',
-    domainModePrefs: 'webchat_domain_mode_prefs_v1'
+    domainModePrefs: 'webchat_domain_mode_prefs_v1',
+    // 按 URL 索引的对话归档。只存轻量元数据，便于抽屉列表快速加载。
+    // 结构：{ [urlKey]: [ArchiveIndexEntry, ...] }
+    archiveIndex: 'webchat_archive_index_v1'
 };
 
 // 按域名记忆的默认会话模式：{ [domain]: chatMode }
@@ -152,6 +156,10 @@ async function handleRuntimeMessage(request, sender) {
         return await setChatMode(request.tabId, request.chatMode);
     }
 
+    if (action === 'promoteSessionToPersist') {
+        return await promoteSessionToPersist(request.tabId);
+    }
+
     if (action === 'setMentorFlavor') {
         return await setMentorFlavor(request.tabId, request.mentorFlavor);
     }
@@ -186,6 +194,20 @@ async function handleRuntimeMessage(request, sender) {
 
     if (action === 'saveHistory') {
         return { status: 'ignored' };
+    }
+
+    // ===== 对话归档 API =====
+    if (action === 'listArchivesForUrl') {
+        const list = await listArchivesForUrl(request.url || '');
+        return { status: 'ok', items: list };
+    }
+
+    if (action === 'restoreArchive') {
+        return await restoreArchiveToTab(request.tabId, request.sessionId);
+    }
+
+    if (action === 'deleteArchive') {
+        return await deleteArchiveEntry(request.sessionId, request.url || '');
     }
 
     return { status: 'unknown-action' };
@@ -544,6 +566,56 @@ async function setChatMode(tabId, chatMode) {
     };
 }
 
+// 手动"入库当前对话"：
+// - 把所有已存在的 turn 的 shouldPersist 回填为 true（否则 buildLogPayload 会过滤掉）
+// - 把当前模式切到对应的入库变体（web_* → web_persisted；chat_* → chat_persisted）
+// - 立即触发一次 persistSessionLog 写出到本地日志服务
+// - 若当前已是入库模式，则只是再手动落一次盘
+async function promoteSessionToPersist(tabId) {
+    const session = getSession(tabId);
+    if (!session) {
+        return { status: 'error', error: '当前标签尚无会话可入库。' };
+    }
+
+    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const currentMode = session.sessionMeta.currentChatMode;
+    const alreadyPersisted = modeShouldPersist(currentMode);
+
+    if (!alreadyPersisted) {
+        const targetMode = modeUsesPageContext(currentMode)
+            ? CHAT_MODES.WEB_PERSISTED
+            : CHAT_MODES.CHAT_PERSISTED;
+
+        // 回填历史 turns，让它们都进入本次导出
+        session.turns.forEach((turn) => {
+            turn.shouldPersist = true;
+            turn.chatMode = targetMode;
+        });
+
+        session.sessionMeta.currentChatMode = targetMode;
+        touchSession(session);
+        await saveSession(tabId, session, true);
+
+        const tabInfo = await getTabSnapshot(tabId);
+        void rememberDomainMode(tabInfo?.pageDomain, targetMode);
+        broadcastChatModeUpdate(tabId, targetMode, 'chat-mode-promoted');
+    }
+
+    await persistSessionLog(tabId, 'manual-persist', settings);
+
+    // 手动入库时立刻把完整 blob 也归档一份，保证在关 tab 前就可以回溯
+    try { await commitArchiveFromSession(session, 'persisted'); }
+    catch (e) { console.warn('archive 归档失败（manual-persist）:', e); }
+
+    const finalMode = session.sessionMeta.currentChatMode;
+    return {
+        status: 'ok',
+        chatMode: finalMode,
+        alreadyPersisted,
+        turnsPersisted: session.turns.length
+    };
+}
+
 async function setMentorFlavor(tabId, mentorFlavor) {
     const normalizedFlavor = normalizeMentorFlavor(mentorFlavor);
     const tabInfo = await getTabSnapshot(tabId);
@@ -840,6 +912,11 @@ async function handleAnswerGeneration(tabId, question, pageContent, settings) {
         await saveSession(tabId, session, true);
 
         await persistSessionLog(tabId, 'answer-complete', settings);
+
+        // 每回合完成后把 index + blob 一起写。
+        // 必须写 blob：否则用户在同一 tab 直接打开 📚 点"继续对话"时
+        // readArchiveBlob 会返回 null 导致恢复失败（只写 index 不够）。
+        try { await commitArchiveFromSession(session); } catch (e) { console.warn('archive 归档失败:', e); }
 
         broadcastToTab(tabId, {
             type: 'answer-end',
@@ -1246,6 +1323,251 @@ async function getTabSnapshot(tabId, pageContent = '') {
     };
 }
 
+// ==================== 对话归档（按 URL 索引） ====================
+//
+// 设计目标：用户下次打开同一网页时，能看到过去在这个页面聊过的会话列表，
+// 并可选择任意一条"真·恢复"到当前 tab 继续聊。
+//
+// 存储分两层：
+//   - archiveIndex: chrome.storage.local 里的一张大 Map，key = 归一化 URL，
+//     value = 轻量 entry 数组（只含 metadata + preview），抽屉列表一次读完。
+//   - archiveBlob: 每条会话一个单独 key（webchat_archive_blob_v1:<sessionId>），
+//     存完整 history/turns/preambleChain。只有用户点某条"恢复"时才按需读取。
+//
+// URL 归一化：只取 origin + pathname，忽略 query/hash，避免同一页因追踪参数
+// 或锚点被拆成多条。chrome:// / file:// / 扩展页不存档。
+
+const ARCHIVE_BLOB_PREFIX = 'webchat_archive_blob_v1:';
+const ARCHIVE_MAX_PER_URL = 20;             // 每个 URL 最多保留 N 条
+const ARCHIVE_PREVIEW_LEN = 140;            // preview 截断长度
+
+function normalizeArchiveUrl(rawUrl) {
+    if (!rawUrl || typeof rawUrl !== 'string') return '';
+    try {
+        const u = new URL(rawUrl);
+        // 跳过特殊协议
+        if (!/^https?:$/.test(u.protocol)) return '';
+        // origin + pathname，忽略 query / hash
+        return (u.origin + u.pathname).replace(/\/$/, '');
+    } catch (_) {
+        return '';
+    }
+}
+
+function buildArchivePreview(session) {
+    const firstUserTurn = (session.turns || []).find((t) => t.question);
+    const firstAssistantTurn = (session.turns || []).find((t) => t.answer);
+    const q = firstUserTurn?.question || '';
+    const a = firstAssistantTurn?.answer || '';
+    const part = (s) => s.replace(/\s+/g, ' ').slice(0, 60);
+    const parts = [];
+    if (q) parts.push('Q: ' + part(q));
+    if (a) parts.push('A: ' + part(a));
+    return parts.join(' / ').slice(0, ARCHIVE_PREVIEW_LEN);
+}
+
+function buildArchiveIndexEntry(session, mode /* 'persisted' | 'ephemeral' */) {
+    const meta = session.sessionMeta || {};
+    return {
+        sessionId: meta.sessionId,
+        pageUrl: meta.pageUrl || '',
+        pageTitle: meta.pageTitle || '未命名页面',
+        createdAt: meta.startedAt || new Date().toISOString(),
+        lastTurnAt: meta.lastActivityAt || meta.updatedAt || new Date().toISOString(),
+        turnCount: (session.turns || []).length,
+        chatMode: meta.currentChatMode,
+        mentorFlavor: meta.mentorFlavor,
+        mode: mode || (modeShouldPersist(meta.currentChatMode) ? 'persisted' : 'ephemeral'),
+        preview: buildArchivePreview(session)
+    };
+}
+
+async function loadArchiveIndex() {
+    const got = await chrome.storage.local.get({ [STORAGE_KEYS.archiveIndex]: {} });
+    const raw = got[STORAGE_KEYS.archiveIndex];
+    return raw && typeof raw === 'object' ? raw : {};
+}
+
+async function saveArchiveIndex(index) {
+    await chrome.storage.local.set({ [STORAGE_KEYS.archiveIndex]: index });
+}
+
+// upsert：同 sessionId 的 entry 会被整条替换；按 lastTurnAt 倒序；超出 cap 的淘汰。
+// 被淘汰的 entry 同步把它的 blob 也删了，避免孤儿。
+async function upsertArchiveIndexEntry(urlKey, entry) {
+    if (!urlKey || !entry || !entry.sessionId) return;
+    const index = await loadArchiveIndex();
+    const list = Array.isArray(index[urlKey]) ? index[urlKey].slice() : [];
+    const existingIdx = list.findIndex((e) => e && e.sessionId === entry.sessionId);
+    if (existingIdx >= 0) {
+        list[existingIdx] = entry;
+    } else {
+        list.push(entry);
+    }
+    // 按最近活动时间倒序
+    list.sort((a, b) => String(b.lastTurnAt).localeCompare(String(a.lastTurnAt)));
+    // LRU：超出上限的丢弃，并删掉对应 blob
+    const toDrop = list.splice(ARCHIVE_MAX_PER_URL);
+    if (toDrop.length) {
+        const dropKeys = toDrop.map((e) => ARCHIVE_BLOB_PREFIX + e.sessionId);
+        try { await chrome.storage.local.remove(dropKeys); } catch (_) { /* ignore */ }
+    }
+    index[urlKey] = list;
+    await saveArchiveIndex(index);
+}
+
+async function removeArchiveIndexEntry(urlKey, sessionId) {
+    if (!urlKey || !sessionId) return;
+    const index = await loadArchiveIndex();
+    const list = Array.isArray(index[urlKey]) ? index[urlKey] : [];
+    const next = list.filter((e) => e && e.sessionId !== sessionId);
+    if (next.length === 0) {
+        delete index[urlKey];
+    } else {
+        index[urlKey] = next;
+    }
+    await saveArchiveIndex(index);
+}
+
+async function writeArchiveBlob(session) {
+    const sessionId = session?.sessionMeta?.sessionId;
+    if (!sessionId) return;
+    const blob = {
+        sessionId,
+        savedAt: new Date().toISOString(),
+        sessionMeta: session.sessionMeta,
+        history: session.history || [],
+        turns: session.turns || []
+    };
+    await chrome.storage.local.set({ [ARCHIVE_BLOB_PREFIX + sessionId]: blob });
+}
+
+async function readArchiveBlob(sessionId) {
+    if (!sessionId) return null;
+    const key = ARCHIVE_BLOB_PREFIX + sessionId;
+    const got = await chrome.storage.local.get({ [key]: null });
+    return got[key] || null;
+}
+
+async function deleteArchiveBlob(sessionId) {
+    if (!sessionId) return;
+    try {
+        await chrome.storage.local.remove(ARCHIVE_BLOB_PREFIX + sessionId);
+    } catch (_) { /* ignore */ }
+}
+
+// 增量更新：只改 index，不写 blob（省 IO）。用在每轮 answer-complete 后。
+async function touchArchiveIndexFromSession(session) {
+    const urlKey = normalizeArchiveUrl(session?.sessionMeta?.pageUrl);
+    if (!urlKey) return;
+    if (!session.turns || session.turns.length === 0) return;
+    const mode = modeShouldPersist(session.sessionMeta.currentChatMode) ? 'persisted' : 'ephemeral';
+    const entry = buildArchiveIndexEntry(session, mode);
+    await upsertArchiveIndexEntry(urlKey, entry);
+}
+
+// 全量写入：index + blob。用在 finalize / manual persist 时。
+async function commitArchiveFromSession(session, mode) {
+    const urlKey = normalizeArchiveUrl(session?.sessionMeta?.pageUrl);
+    if (!urlKey) return;
+    if (!session.turns || session.turns.length === 0) return;
+    const resolvedMode = mode || (modeShouldPersist(session.sessionMeta.currentChatMode) ? 'persisted' : 'ephemeral');
+    const entry = buildArchiveIndexEntry(session, resolvedMode);
+    await upsertArchiveIndexEntry(urlKey, entry);
+    await writeArchiveBlob(session);
+}
+
+async function listArchivesForUrl(rawUrl) {
+    const urlKey = normalizeArchiveUrl(rawUrl);
+    if (!urlKey) return [];
+    const index = await loadArchiveIndex();
+    const list = Array.isArray(index[urlKey]) ? index[urlKey] : [];
+    // 已经是倒序的，这里再保险一次
+    return list.slice().sort((a, b) => String(b.lastTurnAt).localeCompare(String(a.lastTurnAt)));
+}
+
+async function deleteArchiveEntry(sessionId, rawUrlHint) {
+    if (!sessionId) return { status: 'error', error: 'missing sessionId' };
+    let urlKey = normalizeArchiveUrl(rawUrlHint);
+    if (!urlKey) {
+        // 兜底扫一遍索引，找到属于哪个 URL
+        const index = await loadArchiveIndex();
+        for (const [k, list] of Object.entries(index)) {
+            if (Array.isArray(list) && list.some((e) => e?.sessionId === sessionId)) {
+                urlKey = k;
+                break;
+            }
+        }
+    }
+    if (urlKey) {
+        await removeArchiveIndexEntry(urlKey, sessionId);
+    }
+    await deleteArchiveBlob(sessionId);
+    return { status: 'ok' };
+}
+
+// 把归档的会话恢复到指定 tab 作为当前 session。
+// 真·恢复：history / turns / preambleChain / mentorFlavor / chatMode 全部接回去；
+// 为避免 sessionId 冲突，这里会新发一个 sessionId（原 archive 那条保留不动）。
+async function restoreArchiveToTab(tabId, sessionId) {
+    if (!tabId || !sessionId) {
+        return { status: 'error', error: '缺少 tabId 或 sessionId' };
+    }
+    const blob = await readArchiveBlob(sessionId);
+    if (!blob) {
+        return { status: 'error', error: '找不到该归档（可能已被删除）' };
+    }
+
+    // 先把当前 tab 的会话收尾（会自动写一遍 archive，下次还能找到）
+    const existing = getSession(tabId);
+    if (existing) {
+        await finalizeAndClearSession(tabId, 'restore-from-archive');
+    }
+
+    const tabInfo = await getTabSnapshot(tabId);
+    const now = new Date().toISOString();
+
+    // 新 session 以 blob 内容为骨架，但 sessionId 重新生成避免和原归档冲突
+    const restored = normalizeSession({
+        sessionMeta: {
+            ...blob.sessionMeta,
+            sessionId: createSessionId(blob.sessionMeta?.pageTitle || tabInfo.pageTitle),
+            startedAt: blob.sessionMeta?.startedAt || now,
+            updatedAt: now,
+            lastActivityAt: now,
+            // 页面信息用当前 tab 的（因为用户现在就在这一页，URL 可能带不同 query/hash）
+            pageUrl: tabInfo.pageUrl,
+            pageTitle: tabInfo.pageTitle,
+            pageDomain: tabInfo.pageDomain,
+            // pageContentExcerpt 保留 blob 的，让 preambleChain 的"锚"语义不乱；
+            // 下一轮提问时若页面正文有变，maybeAppendPreamble 会自然追加新章节
+            isFinalizing: false,
+            lastRotationReason: '',
+            lastRecoveryReason: 'restored-from-archive'
+        },
+        history: blob.history || [],
+        turns: (blob.turns || []).map((t) => ({ ...t }))
+    });
+
+    await saveSession(tabId, restored, true);
+
+    // 通知该 tab 的 content script 把 UI 重绘成恢复后的 history
+    if (typeof tabId === 'number') {
+        chrome.tabs.sendMessage(tabId, {
+            action: 'sessionReset',
+            reason: 'restored-from-archive'
+        }).catch(() => { /* 标签页可能已关闭 */ });
+    }
+
+    return {
+        status: 'ok',
+        sessionId: restored.sessionMeta.sessionId,
+        chatMode: restored.sessionMeta.currentChatMode,
+        mentorFlavor: restored.sessionMeta.mentorFlavor,
+        turnCount: restored.turns.length
+    };
+}
+
 function createSession(tabInfo, chatMode = DEFAULT_CHAT_MODE) {
     const now = new Date().toISOString();
     return normalizeSession({
@@ -1556,7 +1878,28 @@ async function finalizeAndClearSession(tabId, reason) {
     touchSession(session);
     await saveSession(tabId, session, true);
     await persistSessionLog(tabId, reason, settings);
+
+    // 会话即将被清掉：把完整 blob 落到 archive，方便用户下次在同一页恢复。
+    // 空会话（没 turn）不写，避免 "每次关标签都产一条空归档"。
+    try {
+        if ((session.turns || []).length > 0) {
+            await commitArchiveFromSession(session);
+        }
+    } catch (e) {
+        console.warn('archive 归档失败:', e);
+    }
+
     await deleteSession(tabId, true);
+
+    // 通知该 tab 里的 content script：会话已被后端清空，UI 该刷新了。
+    // broadcastToTab 走的是 runtime port（只在流式中存在）—— 空闲对话框收不到，
+    // 所以这里用 chrome.tabs.sendMessage 主动广播，覆盖 SPA 换页等场景。
+    if (typeof tabId === 'number') {
+        chrome.tabs.sendMessage(tabId, {
+            action: 'sessionReset',
+            reason
+        }).catch(() => { /* 标签页可能已关闭或 content script 未加载 */ });
+    }
 }
 
 async function persistSessionLog(tabId, reason, providedSettings = null) {
@@ -1600,7 +1943,8 @@ function buildLogPayload(session, reason, settings) {
     const exportedTurns = [];
     let skippedGapPending = false;
 
-    for (const turn of session.turns) {
+    for (let turnIndex = 0; turnIndex < session.turns.length; turnIndex += 1) {
+        const turn = session.turns[turnIndex];
         if (!turn.shouldPersist) {
             if (messages.length > 0) {
                 skippedGapPending = true;
@@ -1662,6 +2006,7 @@ function buildLogPayload(session, reason, settings) {
         exportedTurns.push({
             type: 'turn',
             turnId: turn.turnId,
+            turnIndex, // 0-based 位置，用于 Python 侧按 preamble.anchor 映射到章节
             createdAt: turn.createdAt,
             chatMode: turn.chatMode,
             usesPageContext: turn.usesPageContext,
@@ -1678,6 +2023,17 @@ function buildLogPayload(session, reason, settings) {
 
     const sessionPage = buildSessionPageForExport(persistedTurns);
 
+    // 学习轨迹：每段 preamble 是一个"章节"，按 anchor 顺序出现
+    const preambleChain = (session.sessionMeta.preambleChain || []).map((pre, idx) => ({
+        index: idx,
+        anchor: pre.anchor,
+        pageTitle: pre.pageTitle || '',
+        pageUrl: pre.pageUrl || '',
+        excerpt: pre.excerpt || '',
+        content: pre.content || '',
+        createdAt: pre.createdAt || ''
+    }));
+
     return {
         version: chrome.runtime.getManifest().version,
         savedAt: new Date().toISOString(),
@@ -1690,6 +2046,7 @@ function buildLogPayload(session, reason, settings) {
             updatedAt: session.sessionMeta.updatedAt,
             status: session.generatingState.isGenerating ? 'generating' : 'completed',
             page: sessionPage,
+            preambleChain,
             assistant: {
                 apiType: settings.apiType,
                 model: settings[`${settings.apiType}_model`],

@@ -77,6 +77,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // ----- 带教（mentor）模式 -----
+    // 本地缓存设置页里的用户覆盖（label / prompt）
+    const mentorOverrides = { prompts: {}, labels: {} };
+    function refreshMentorOverrides(cb) {
+        try {
+            chrome.storage.sync.get({ mentorPrompts: {}, mentorLabels: {} }, ({ mentorPrompts, mentorLabels }) => {
+                mentorOverrides.prompts = mentorPrompts || {};
+                mentorOverrides.labels = mentorLabels || {};
+                if (cb) cb();
+            });
+        } catch (e) { /* ignore */ }
+    }
+
+    function mentorLabelFor(flavor) {
+        return MentorAPI && MentorAPI.resolveMentorLabel
+            ? MentorAPI.resolveMentorLabel(flavor, mentorOverrides.labels)
+            : (MentorAPI?.MENTOR_META?.[flavor]?.label || flavor);
+    }
+
+    function mentorHasPrompt(flavor) {
+        if (!MentorAPI) return false;
+        const resolved = MentorAPI.resolveMentorPrompt(flavor, mentorOverrides.prompts) || '';
+        return Boolean(resolved.trim());
+    }
+
     function buildMentorPopover() {
         if (!mentorPopover || !MentorAPI) return;
         const flavors = [
@@ -84,16 +108,26 @@ document.addEventListener('DOMContentLoaded', async () => {
             MentorAPI.MENTOR_FLAVORS.ALGORITHM,
             MentorAPI.MENTOR_FLAVORS.PYTHON,
             MentorAPI.MENTOR_FLAVORS.FEYNMAN,
-            MentorAPI.MENTOR_FLAVORS.GENERAL
+            MentorAPI.MENTOR_FLAVORS.GENERAL,
+            MentorAPI.MENTOR_FLAVORS.CUSTOM_1,
+            MentorAPI.MENTOR_FLAVORS.CUSTOM_2,
+            MentorAPI.MENTOR_FLAVORS.CUSTOM_3
         ];
         mentorPopover.innerHTML = flavors.map((f) => {
             const meta = MentorAPI.MENTOR_META[f];
             const active = f === currentMentorFlavor ? ' active' : '';
-            return `<button type="button" class="mentor-item${active}" data-flavor="${f}" role="menuitemradio" aria-checked="${f === currentMentorFlavor}">
+            const isCustom = MentorAPI.isCustomMentorSlot(f);
+            const hasPrompt = mentorHasPrompt(f);
+            const label = mentorLabelFor(f);
+            const hint = isCustom && !hasPrompt
+                ? '（空槽位：去设置页填入提示词后才会生效）'
+                : meta.hint;
+            const extraClass = isCustom && !hasPrompt ? ' empty-slot' : '';
+            return `<button type="button" class="mentor-item${active}${extraClass}" data-flavor="${f}" role="menuitemradio" aria-checked="${f === currentMentorFlavor}">
                 <span class="mentor-item-icon">${meta.icon}</span>
                 <span class="mentor-item-main">
-                    <span class="mentor-item-label">${meta.label}</span>
-                    <span class="mentor-item-hint">${meta.hint}</span>
+                    <span class="mentor-item-label">${label}</span>
+                    <span class="mentor-item-hint">${hint}</span>
                 </span>
             </button>`;
         }).join('');
@@ -106,10 +140,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         mentorToggle.setAttribute('aria-pressed', isOn ? 'true' : 'false');
         mentorToggle.classList.toggle('active', isOn);
         const meta = MentorAPI.getMentorMeta(currentMentorFlavor);
-        mentorToggle.title = isOn ? `带教模式：${meta.label}（点击切换）` : '学习带教模式（苏格拉底式引导）';
+        const label = mentorLabelFor(currentMentorFlavor);
+        mentorToggle.title = isOn ? `带教模式：${label}（点击切换）` : '学习带教模式（苏格拉底式引导）';
         mentorToggle.textContent = isOn ? meta.icon : '🎓';
         buildMentorPopover();
     }
+
+    // 首次加载用户覆盖 + 监听变更
+    refreshMentorOverrides(() => buildMentorPopover());
+    try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area !== 'sync') return;
+            if (changes.mentorPrompts || changes.mentorLabels) {
+                refreshMentorOverrides(() => buildMentorPopover());
+            }
+        });
+    } catch (e) { /* ignore */ }
 
     if (mentorToggle && mentorPopover && MentorAPI) {
         buildMentorPopover();

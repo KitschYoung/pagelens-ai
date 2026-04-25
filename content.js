@@ -16,39 +16,124 @@ function safeStorageGet(defaults, cb) {
     // 上下文已失效，回退到默认值
     try { cb && cb(defaults); } catch (e) {}
 }
+function safeLocalStorageGet(defaults, cb) {
+    try {
+        if (chrome?.runtime?.id && chrome.storage?.local) {
+            chrome.storage.local.get(defaults, cb);
+            return;
+        }
+    } catch (e) { /* extension context invalidated */ }
+    try { cb && cb(defaults); } catch (e) {}
+}
 
+// 抽取页面正文，尽量保留段落 / 标题 / 列表 / 代码块结构。
+// 目标：让 preamble 既对模型可读，也能作为 Markdown 落盘到知识库文件里人眼友好。
 function parseWebContent() {
-    // 克隆当前文档以供解析，不影响原始页面
     const docClone = document.cloneNode(true);
 
-    // 在克隆的文档中移除不需要的元素
-    const scripts = docClone.querySelectorAll('script');
-    const styles = docClone.querySelectorAll('style, link[rel="stylesheet"]');
-    const headers = docClone.querySelectorAll('header, nav');
-    const footers = docClone.querySelectorAll('footer');
-    // ⚠️ 关键：排除 WebChat 自身注入到页面的 UI，否则聊天面板和历史消息会被当成"正文"
-    // 这会让 preamble 每轮都变化，直接毁掉 prompt caching。
-    const webchatUI = docClone.querySelectorAll(
-        '#ai-assistant-dialog, #ai-assistant-ball, #webchat-annot-tooltip, [id^="webchat-"], [id^="ai-assistant-"]'
-    );
-
-    // 从克隆的文档中移除元素
-    [...scripts, ...styles, ...headers, ...footers, ...webchatUI].forEach(element => {
-        if (element.parentNode) {
-            element.parentNode.removeChild(element);
-        }
+    // ① 剔除明显是装饰 / 非正文的元素
+    //   - 站点框架：header / nav / footer / aside + role 等价物
+    //   - 常见导航 class：sidebar / menu / breadcrumb / pagination / toc
+    //   - PageLens AI 自身注入的 UI（聊天面板／悬浮球／标注工具等）
+    //     否则聊天消息会被当正文，preamble 每轮都变，prompt caching 直接废掉
+    const noiseSelectors = [
+        'script', 'style', 'link[rel="stylesheet"]', 'noscript', 'template',
+        'header', 'nav', 'footer', 'aside',
+        '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
+        '[aria-hidden="true"]',
+        '#ai-assistant-dialog', '#ai-assistant-ball', '#webchat-annot-tooltip',
+        '[id^="webchat-"]', '[id^="ai-assistant-"]',
+        '.sidebar', '.site-nav', '.breadcrumb', '.breadcrumbs', '.pagination',
+        '.table-of-contents', '.toc', '.edit-this-page', '.prev-next-footer'
+    ];
+    docClone.querySelectorAll(noiseSelectors.join(',')).forEach((el) => {
+        if (el.parentNode) el.parentNode.removeChild(el);
     });
 
-    // 获取主要内容（从body中提取）
-    const mainContent = docClone.querySelector('body');
+    const body = docClone.querySelector('body');
+    if (!body) return '';
 
-    // 如果找到了body元素，获取其文本内容
-    const textContent = mainContent ? mainContent.innerText : '';
+    // ② 深度遍历，在块级元素边界插入换行，保留 <pre>/<code>/<h*>/<li>/<blockquote>
+    const BLOCK_TAGS = new Set([
+        'P', 'DIV', 'SECTION', 'ARTICLE', 'MAIN',
+        'LI', 'DT', 'DD', 'FIGCAPTION', 'SUMMARY', 'DETAILS',
+        'TR', 'TABLE', 'THEAD', 'TBODY', 'TFOOT', 'FORM', 'FIELDSET'
+    ]);
+    const HEADING_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+    const parts = [];
 
-    // 清理文本
-    return textContent
-        .replace(/\s+/g, ' ')  // 将多个空白字符替换为单个空格
-        .trim();               // 移除首尾空白
+    function walk(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+            const t = node.nodeValue.replace(/\s+/g, ' ');
+            if (t) parts.push(t);
+            return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+        const tag = node.tagName;
+
+        if (tag === 'PRE') {
+            // 代码块：完整保留缩进与换行；双反引号外层包 ``` 围栏
+            const codeText = (node.innerText || node.textContent || '').replace(/^\n+|\n+$/g, '');
+            if (codeText) parts.push('\n\n```\n' + codeText + '\n```\n\n');
+            return;
+        }
+
+        if (tag === 'CODE' && node.parentNode?.tagName !== 'PRE') {
+            parts.push('`' + (node.textContent || '') + '`');
+            return;
+        }
+
+        if (HEADING_TAGS.has(tag)) {
+            const level = parseInt(tag.charAt(1), 10);
+            parts.push('\n\n' + '#'.repeat(level) + ' ');
+            for (const child of node.childNodes) walk(child);
+            parts.push('\n\n');
+            return;
+        }
+
+        if (tag === 'BR') {
+            parts.push('\n');
+            return;
+        }
+
+        if (tag === 'HR') {
+            parts.push('\n\n---\n\n');
+            return;
+        }
+
+        if (tag === 'LI') {
+            parts.push('\n- ');
+            for (const child of node.childNodes) walk(child);
+            return;
+        }
+
+        if (tag === 'BLOCKQUOTE') {
+            parts.push('\n\n> ');
+            for (const child of node.childNodes) walk(child);
+            parts.push('\n\n');
+            return;
+        }
+
+        if (BLOCK_TAGS.has(tag)) {
+            parts.push('\n\n');
+            for (const child of node.childNodes) walk(child);
+            parts.push('\n\n');
+            return;
+        }
+
+        // 行内元素（a / span / strong / em / ...）：只递归，不加换行
+        for (const child of node.childNodes) walk(child);
+    }
+
+    walk(body);
+
+    // ③ 规范化：收掉行尾空格、多余空行、首尾空白
+    let text = parts.join('');
+    text = text.replace(/[ \t]+\n/g, '\n');   // 行尾空格
+    text = text.replace(/\n{3,}/g, '\n\n');   // 多个空行合并为一个
+    text = text.replace(/^\s+|\s+$/g, '');
+    return text;
 }
 
 let activeDialogSyncController = null;
@@ -89,7 +174,12 @@ function createDialog() {
                             <div class="mentor-popover" id="mentorPopover" hidden role="menu" aria-label="选择带教风格"></div>
                         </div>
                         <button type="button" class="panel-annotate" id="annotateToggle" title="识别并标注本页关键概念（点击开启/关闭）" aria-pressed="false">📍</button>
+                        <button type="button" class="panel-history" id="historyToggle" title="查看本页历史对话" aria-pressed="false">
+                            <span class="history-icon">📚</span><span class="history-count" hidden>0</span>
+                        </button>
+                        <button type="button" class="panel-persist" id="persistToggle" title="把当前对话入库（立即写入知识库并切换为入库模式）" hidden>📥</button>
                         <button type="button" class="panel-clear" title="清空当前会话">🧹</button>
+                        <button type="button" class="panel-settings" id="settingsOpen" title="打开扩展设置">⚙️</button>
                         <button type="button" class="panel-width-cycle" title="切换预设宽度">⤢</button>
                         <button type="button" class="panel-side-switch" title="切换左右停靠">⇄</button>
                         <button type="button" class="panel-close" title="关闭面板 (Esc 也可关)">×</button>
@@ -99,6 +189,15 @@ function createDialog() {
             </div>
             <div id="chat-container" class="chat-container">
                 <div id="messages" class="messages"></div>
+            </div>
+            <div class="history-drawer" id="historyDrawer" hidden>
+                <div class="history-drawer-head">
+                    <span class="hd-title">📚 本页历史对话</span>
+                    <button type="button" class="hd-close" id="historyDrawerClose" title="关闭">×</button>
+                </div>
+                <div class="history-drawer-body" id="historyDrawerBody">
+                    <div class="hd-empty">加载中…</div>
+                </div>
             </div>
             <div class="input-container">
                 <div class="slash-menu" id="slashMenu" hidden role="listbox" aria-label="提示词模板"></div>
@@ -229,6 +328,242 @@ function createDialog() {
         });
     }
 
+    // 打开扩展设置页
+    const settingsBtn = dialog.querySelector('#settingsOpen');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            sendMessageWithRetry({ action: 'openOptions' }).catch((err) => {
+                console.error('打开设置页失败:', err);
+            });
+        });
+    }
+
+    // 手动入库：把当前"不入库"模式的会话升格为入库，并立刻写出日志。
+    // 背后由 background.promoteSessionToPersist 完成：回填 turn.shouldPersist、
+    // 切换 chatMode 到对应 *_persisted 变体、触发一次 persistSessionLog。
+    const persistBtn = dialog.querySelector('#persistToggle');
+    if (persistBtn) {
+        persistBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (persistBtn.disabled) return;
+            persistBtn.disabled = true;
+            try {
+                const res = await sendMessageWithRetry({ action: 'getCurrentTab' });
+                const targetTabId = res?.tabId;
+                const response = await sendMessageWithRetry({
+                    action: 'promoteSessionToPersist',
+                    tabId: targetTabId
+                });
+                if (!response || response.status !== 'ok') {
+                    throw new Error(response?.error || '入库失败');
+                }
+                if (response.alreadyPersisted) {
+                    showNotification('当前已是入库模式，已再次同步一次日志。');
+                } else {
+                    showNotification(`已入库当前对话（${response.turnsPersisted} 轮），并切换为入库模式。`);
+                }
+            } catch (err) {
+                console.error('入库失败:', err);
+                showNotification('入库失败：' + (err?.message || err));
+            } finally {
+                persistBtn.disabled = false;
+            }
+        });
+    }
+
+    // ===== 📚 本页历史对话抽屉 =====
+    // 列表来自 background: listArchivesForUrl（按 origin + pathname 匹配）
+    // 选一条 → restoreArchive 恢复到当前 tab，UI 会通过 sessionReset 自动刷新
+    const historyBtn = dialog.querySelector('#historyToggle');
+    const historyDrawer = dialog.querySelector('#historyDrawer');
+    const historyDrawerBody = dialog.querySelector('#historyDrawerBody');
+    const historyDrawerClose = dialog.querySelector('#historyDrawerClose');
+    const historyCountBadge = historyBtn ? historyBtn.querySelector('.history-count') : null;
+
+    function escHtml(s) {
+        return String(s || '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function formatRelativeTime(iso) {
+        try {
+            const t = new Date(iso).getTime();
+            if (!isFinite(t)) return '';
+            const diffMs = Date.now() - t;
+            const mins = Math.round(diffMs / 60000);
+            if (mins < 1) return '刚刚';
+            if (mins < 60) return `${mins} 分钟前`;
+            const hours = Math.round(mins / 60);
+            if (hours < 24) return `${hours} 小时前`;
+            const days = Math.round(hours / 24);
+            if (days < 30) return `${days} 天前`;
+            return new Date(iso).toLocaleDateString();
+        } catch (_) { return ''; }
+    }
+
+    async function updateHistoryBadge() {
+        if (!historyCountBadge) return;
+        try {
+            const resp = await sendMessageWithRetry({
+                action: 'listArchivesForUrl',
+                url: location.href
+            });
+            const count = (resp?.items || []).length;
+            if (count > 0) {
+                historyCountBadge.textContent = String(count);
+                historyCountBadge.hidden = false;
+            } else {
+                historyCountBadge.hidden = true;
+            }
+        } catch (err) {
+            console.warn('更新历史徽章失败:', err);
+        }
+    }
+
+    async function renderHistoryDrawer() {
+        if (!historyDrawerBody) return;
+        historyDrawerBody.innerHTML = '<div class="hd-empty">加载中…</div>';
+        let items = [];
+        try {
+            const resp = await sendMessageWithRetry({
+                action: 'listArchivesForUrl',
+                url: location.href
+            });
+            items = resp?.items || [];
+        } catch (err) {
+            historyDrawerBody.innerHTML = `<div class="hd-empty hd-error">加载失败：${escHtml(err?.message || err)}</div>`;
+            return;
+        }
+        if (items.length === 0) {
+            historyDrawerBody.innerHTML = '<div class="hd-empty">本页暂无历史对话。开始聊天后，下一轮回答结束就会自动归档。</div>';
+            return;
+        }
+        const modeIcon = (mode) => mode === 'persisted' ? '📥' : '⚡';
+        const html = items.map((it) => `
+            <div class="hd-item" data-session-id="${escHtml(it.sessionId)}">
+                <div class="hd-item-head">
+                    <span class="hd-mode-icon" title="${it.mode === 'persisted' ? '已入库' : '临时'}">${modeIcon(it.mode)}</span>
+                    <span class="hd-title-text" title="${escHtml(it.pageTitle)}">${escHtml(it.pageTitle)}</span>
+                    <span class="hd-time">${escHtml(formatRelativeTime(it.lastTurnAt))}</span>
+                </div>
+                <div class="hd-item-meta">
+                    <span class="hd-turn">${it.turnCount} 轮</span>
+                </div>
+                <div class="hd-preview">${escHtml(it.preview || '（无预览）')}</div>
+                <div class="hd-item-actions">
+                    <button type="button" class="hd-restore" data-session-id="${escHtml(it.sessionId)}">继续对话</button>
+                    <button type="button" class="hd-delete" data-session-id="${escHtml(it.sessionId)}" title="删除这条归档">🗑</button>
+                </div>
+            </div>
+        `).join('');
+        historyDrawerBody.innerHTML = html;
+    }
+
+    function openHistoryDrawer() {
+        if (!historyDrawer) return;
+        historyDrawer.hidden = false;
+        if (historyBtn) historyBtn.setAttribute('aria-pressed', 'true');
+        void renderHistoryDrawer();
+    }
+
+    function closeHistoryDrawer() {
+        if (!historyDrawer) return;
+        historyDrawer.hidden = true;
+        if (historyBtn) historyBtn.setAttribute('aria-pressed', 'false');
+    }
+
+    if (historyBtn && historyDrawer) {
+        historyBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (historyDrawer.hidden) openHistoryDrawer();
+            else closeHistoryDrawer();
+        });
+    }
+    if (historyDrawerClose) {
+        historyDrawerClose.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeHistoryDrawer();
+        });
+    }
+
+    if (historyDrawerBody) {
+        historyDrawerBody.addEventListener('click', async (e) => {
+            const restoreEl = e.target.closest('.hd-restore');
+            const deleteEl = e.target.closest('.hd-delete');
+            const itemEl = e.target.closest('.hd-item');
+            console.debug('[PageLens AI] history-drawer click',
+                { target: e.target, hasItem: !!itemEl, hasRestore: !!restoreEl, hasDelete: !!deleteEl });
+            if (!itemEl) return;
+
+            if (deleteEl) {
+                e.stopPropagation();
+                const sid = deleteEl.dataset.sessionId;
+                if (!confirm('确认删除这条归档吗？该对话的完整内容将被清除。')) return;
+                try {
+                    const resp = await sendMessageWithRetry({
+                        action: 'deleteArchive',
+                        sessionId: sid,
+                        url: location.href
+                    });
+                    if (resp?.status !== 'ok') throw new Error(resp?.error || '删除失败');
+                    itemEl.remove();
+                    void updateHistoryBadge();
+                    if (!historyDrawerBody.querySelector('.hd-item')) {
+                        historyDrawerBody.innerHTML = '<div class="hd-empty">本页暂无历史对话。</div>';
+                    }
+                } catch (err) {
+                    showNotification('删除失败：' + (err?.message || err));
+                }
+                return;
+            }
+
+            // 走到这里：点的是 .hd-restore 或 card 其它位置
+            e.stopPropagation();
+            const sid = (restoreEl || itemEl).dataset.sessionId;
+            console.debug('[PageLens AI] restore archive, sessionId=', sid);
+            if (!sid) {
+                showNotification('恢复失败：找不到该条目的 sessionId');
+                return;
+            }
+            try {
+                const res = await sendMessageWithRetry({ action: 'getCurrentTab' });
+                const targetTabId = res?.tabId;
+                console.debug('[PageLens AI] restore archive, tabId=', targetTabId);
+                const resp = await sendMessageWithRetry({
+                    action: 'restoreArchive',
+                    tabId: targetTabId,
+                    sessionId: sid
+                });
+                console.debug('[PageLens AI] restoreArchive resp=', resp);
+                if (!resp || resp.status !== 'ok') {
+                    throw new Error(resp?.error || '后端未返回成功状态');
+                }
+                closeHistoryDrawer();
+                // UI 由 background 的 sessionReset 广播触发刷新，无需再手动 loadHistory
+                showNotification(`已恢复历史对话（${resp.turnCount} 轮），可继续对话`);
+            } catch (err) {
+                console.error('[PageLens AI] 恢复失败:', err);
+                showNotification('恢复失败：' + (err?.message || err));
+            }
+        });
+    }
+
+    // 初始化一次徽章
+    void updateHistoryBadge();
+
+    // archive 索引变动时（比如当前或其它 tab 刚写了新归档）自动刷新徽章和抽屉
+    try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area !== 'local' || !changes.webchat_archive_index_v1) return;
+            void updateHistoryBadge();
+            if (historyDrawer && !historyDrawer.hidden) {
+                void renderHistoryDrawer();
+            }
+        });
+    } catch (_) { /* ignore */ }
+
     // 宽度预设循环：360 -> 420 -> 560 -> 越宽越窄
     const WIDTH_PRESETS = [360, 420, 560, 760];
     const widthCycleBtn = dialog.querySelector('.panel-width-cycle');
@@ -334,6 +669,8 @@ function createFloatingBall() {
     // 创建容器
     const container = document.createElement('div');
     container.className = 'ball-container';
+    const BALL_EDGE_OVERHANG = 0;
+    const EDGE_CLASSES = ['edge-left', 'edge-right', 'edge-top', 'edge-bottom'];
 
     // 创建悬浮球
     const ball = document.createElement('div');
@@ -343,6 +680,21 @@ function createFloatingBall() {
         <path d="M635.733333 488.533333m-59.733333 0a59.733333 59.733333 0 1 0 119.466667 0 59.733333 59.733333 0 1 0-119.466667 0Z" p-id="1319" fill="white"></path>
         <path d="M460.864 507.733333m-50.133333 0a50.133333 50.133333 0 1 0 100.266666 0 50.133333 50.133333 0 1 0-100.266666 0Z" p-id="1320" fill="white"></path>
     </svg>`;
+    const defaultBallIconHtml = ball.innerHTML;
+
+    function applyFloatingIcon(dataUrl) {
+        if (!dataUrl) {
+            ball.innerHTML = defaultBallIconHtml;
+            return;
+        }
+        ball.innerHTML = '';
+        const img = document.createElement('img');
+        img.className = 'custom-floating-icon';
+        img.alt = '';
+        img.draggable = false;
+        img.src = dataUrl;
+        ball.appendChild(img);
+    }
 
     // 创建设置按钮
     const settingsButton = document.createElement('div');
@@ -373,19 +725,122 @@ function createFloatingBall() {
     container.appendChild(ball);
     container.appendChild(settingsButton);
 
+    safeLocalStorageGet({ floatingIconDataUrl: '' }, ({ floatingIconDataUrl }) => {
+        applyFloatingIcon(floatingIconDataUrl);
+    });
+
+    try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area === 'local' && changes.floatingIconDataUrl) {
+                applyFloatingIcon(changes.floatingIconDataUrl.newValue || '');
+            }
+        });
+    } catch (e) { /* extension context invalidated */ }
+
+    function clearEdgeState() {
+        ball.classList.remove(...EDGE_CLASSES);
+        container.classList.remove(...EDGE_CLASSES);
+    }
+
+    function applyEdgeState(edge) {
+        clearEdgeState();
+        if (!edge) return;
+        ball.classList.add(`edge-${edge}`);
+        container.classList.add(`edge-${edge}`);
+    }
+
+    function parseCssPx(value) {
+        const n = parseInt(value, 10);
+        return Number.isFinite(n) ? n : null;
+    }
+
+    function clampX(x) {
+        return Math.max(0, Math.min(Math.round(x), window.innerWidth - container.offsetWidth));
+    }
+
+    function clampY(y) {
+        return Math.max(0, Math.min(Math.round(y), window.innerHeight - container.offsetHeight));
+    }
+
+    function fallbackX() {
+        return clampX((window.innerWidth - container.offsetWidth) / 2);
+    }
+
+    function fallbackY() {
+        return clampY((window.innerHeight - container.offsetHeight) / 2);
+    }
+
+    function dockedPosition(edge, x, y) {
+        if (edge === 'left') {
+            return {
+                left: `-${BALL_EDGE_OVERHANG}px`,
+                top: `${clampY(y ?? fallbackY())}px`,
+                right: 'auto',
+                bottom: 'auto',
+                edge
+            };
+        }
+        if (edge === 'right') {
+            return {
+                right: `-${BALL_EDGE_OVERHANG}px`,
+                top: `${clampY(y ?? fallbackY())}px`,
+                left: 'auto',
+                bottom: 'auto',
+                edge
+            };
+        }
+        if (edge === 'top') {
+            return {
+                top: `-${BALL_EDGE_OVERHANG}px`,
+                left: `${clampX(x ?? fallbackX())}px`,
+                right: 'auto',
+                bottom: 'auto',
+                edge
+            };
+        }
+        return {
+            bottom: `-${BALL_EDGE_OVERHANG}px`,
+            left: `${clampX(x ?? fallbackX())}px`,
+            right: 'auto',
+            top: 'auto',
+            edge: 'bottom'
+        };
+    }
+
+    function applyBallPosition(position) {
+        Object.assign(container.style, position);
+        applyEdgeState(position.edge);
+        safeStorageSet({ ballPosition: position });
+    }
+
     // 修改拖拽功能
     let isDragging = false;
+    let hasMoved = false;
     let currentX;
     let currentY;
     let initialX;
     let initialY;
 
     ball.addEventListener('mousedown', (e) => {
+        e.preventDefault();
         isDragging = true;
+        hasMoved = false;
+        container.dataset.dragging = 'true';
         const rect = container.getBoundingClientRect();
         initialX = e.clientX - rect.left;
         initialY = e.clientY - rect.top;
     });
+
+    ball.addEventListener('dragstart', (e) => {
+        e.preventDefault();
+    });
+
+    ball.addEventListener('click', (e) => {
+        if (hasMoved) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+        }
+    }, true);
 
     // 拖动期间：自由跟随鼠标，不做任何吸附，保证拖拽手感丝滑
     document.addEventListener('mousemove', (e) => {
@@ -394,6 +849,7 @@ function createFloatingBall() {
         e.preventDefault();
         currentX = e.clientX - initialX;
         currentY = e.clientY - initialY;
+        hasMoved = true;
 
         const maxX = window.innerWidth - container.offsetWidth;
         const maxY = window.innerHeight - container.offsetHeight;
@@ -402,8 +858,9 @@ function createFloatingBall() {
         currentY = Math.max(0, Math.min(currentY, maxY));
 
         // 拖动中先清掉 edge-* 类，避免半吸附抖动
-        ball.classList.remove('edge-left', 'edge-right', 'edge-top', 'edge-bottom');
+        clearEdgeState();
         container.style.transition = 'none';
+        container.style.transform = 'translate3d(0, 0, 0)';
         Object.assign(container.style, {
             left: `${currentX}px`,
             top: `${currentY}px`,
@@ -416,6 +873,7 @@ function createFloatingBall() {
     document.addEventListener('mouseup', () => {
         if (!isDragging) return;
         isDragging = false;
+        delete container.dataset.dragging;
 
         const containerW = container.offsetWidth;
         const containerH = container.offsetHeight;
@@ -437,182 +895,48 @@ function createFloatingBall() {
         const minDist = Math.min(distLeft, distRight, distTop, distBottom);
 
         let edge;
-        let position;
         if (minDist === distLeft) {
             edge = 'left';
-            position = {
-                left: '0px',
-                top: `${Math.max(0, Math.min(y, winH - containerH))}px`,
-                right: 'auto',
-                bottom: 'auto',
-                edge
-            };
         } else if (minDist === distRight) {
             edge = 'right';
-            position = {
-                right: '0px',
-                top: `${Math.max(0, Math.min(y, winH - containerH))}px`,
-                left: 'auto',
-                bottom: 'auto',
-                edge
-            };
         } else if (minDist === distTop) {
             edge = 'top';
-            position = {
-                top: '0px',
-                left: `${Math.max(0, Math.min(x, winW - containerW))}px`,
-                right: 'auto',
-                bottom: 'auto',
-                edge
-            };
         } else {
             edge = 'bottom';
-            position = {
-                bottom: '0px',
-                left: `${Math.max(0, Math.min(x, winW - containerW))}px`,
-                right: 'auto',
-                top: 'auto',
-                edge
-            };
         }
 
-        ball.classList.remove('edge-left', 'edge-right', 'edge-top', 'edge-bottom');
-        ball.classList.add(`edge-${edge}`);
         // 用过渡动画让吸附过程更平滑
-        container.style.transition = 'left 0.2s ease, top 0.2s ease, right 0.2s ease, bottom 0.2s ease';
-        Object.assign(container.style, position);
-
-        safeStorageSet({ ballPosition: position });
+        container.style.transition = '';
+        container.style.transform = 'translate3d(0, 0, 0)';
+        applyBallPosition(dockedPosition(edge, x, y));
     });
 
     // 从存储中加载位置，并确保位置在可视区域内
     safeStorageGet({
-        ballPosition: { right: '0px', bottom: '20px', left: 'auto', top: 'auto', edge: 'right' }
+        ballPosition: { edge: 'right' }
     }, (items) => {
-        // 获取容器和窗口尺寸
-        const containerRect = container.getBoundingClientRect();
-        const windowWidth = window.innerWidth;
-        const windowHeight = window.innerHeight;
+        const saved = items.ballPosition || { edge: 'right' };
+        const edge = ['left', 'right', 'top', 'bottom'].includes(saved.edge) ? saved.edge : 'right';
+        let x = parseCssPx(saved.left);
+        let y = parseCssPx(saved.top);
 
-        // 解析保存的位置值
-        let position = items.ballPosition;
-        let left = position.left !== 'auto' ? parseInt(position.left) : null;
-        let right = position.right !== 'auto' ? parseInt(position.right) : null;
-        let top = position.top !== 'auto' ? parseInt(position.top) : null;
-        let bottom = position.bottom !== 'auto' ? parseInt(position.bottom) : null;
-
-        // 确保位置在可视区域内
-        if (left !== null) {
-            // 如果使用left定位
-            left = Math.min(Math.max(0, left), windowWidth - containerRect.width);
-            position = {
-                left: `${left}px`,
-                top: position.top,
-                right: 'auto',
-                bottom: position.bottom,
-                edge: position.edge
-            };
-        } else if (right !== null) {
-            // 如果使用right定位
-            right = Math.min(Math.max(0, right), windowWidth - containerRect.width);
-            position = {
-                right: `${right}px`,
-                top: position.top,
-                left: 'auto',
-                bottom: position.bottom,
-                edge: position.edge
-            };
+        if (x === null && parseCssPx(saved.right) !== null) {
+            x = window.innerWidth - parseCssPx(saved.right) - container.offsetWidth;
+        }
+        if (y === null && parseCssPx(saved.bottom) !== null) {
+            y = window.innerHeight - parseCssPx(saved.bottom) - container.offsetHeight;
         }
 
-        if (top !== null) {
-            // 如果使用top定
-            top = Math.min(Math.max(0, top), windowHeight - containerRect.height);
-            position = {
-                ...position,
-                top: `${top}px`,
-                bottom: 'auto'
-            };
-        } else if (bottom !== null) {
-            // 如果使用bottom定位
-            bottom = Math.min(Math.max(0, bottom), windowHeight - containerRect.height);
-            position = {
-                ...position,
-                bottom: `${bottom}px`,
-                top: 'auto'
-            };
-        }
-
-        // 应用位置
-        Object.assign(container.style, position);
-
-        // 如果有边缘状态，添加相应的类
-        if (position.edge) {
-            ball.classList.add(`edge-${position.edge}`);
-        }
-
-        // 保存调整后的位置
-        safeStorageSet({ ballPosition: position });
+        applyBallPosition(dockedPosition(edge, x, y));
     });
 
     // 添加窗口大小变化监听器
     window.addEventListener('resize', () => {
         // 获取当前位置
         const rect = container.getBoundingClientRect();
-        const windowWidth = window.innerWidth;
-        const windowHeight = window.innerHeight;
-
-        // 确保位置在可视区内
-        let left = rect.left;
-        let top = rect.top;
-
-        // 调整位置
-        if (left + rect.width > windowWidth) {
-            left = windowWidth - rect.width;
-        }
-        if (top + rect.height > windowHeight) {
-            top = windowHeight - rect.height;
-        }
-
-        // 确保不会小于0
-        left = Math.max(0, left);
-        top = Math.max(0, top);
-
-        // 应用新位置
-        const position = {
-            left: `${left}px`,
-            top: `${top}px`,
-            right: 'auto',
-            bottom: 'auto',
-            edge: null // 重置边缘状态
-        };
-
-        Object.assign(container.style, position);
-
-        // 保存新位置
-        safeStorageSet({ ballPosition: position });
-
-        // 检查是否需要添加边缘类
-        const edgeThreshold = ball.offsetWidth / 2;
-        ball.classList.remove('edge-left', 'edge-right', 'edge-top', 'edge-bottom');
-
-        if (left <= edgeThreshold) {
-            ball.classList.add('edge-left');
-            position.edge = 'left';
-        } else if (left >= windowWidth - rect.width - edgeThreshold) {
-            ball.classList.add('edge-right');
-            position.edge = 'right';
-        }
-
-        if (top <= edgeThreshold) {
-            ball.classList.add('edge-top');
-            position.edge = 'top';
-        } else if (top >= windowHeight - rect.height - edgeThreshold) {
-            ball.classList.add('edge-bottom');
-            position.edge = 'bottom';
-        }
-
-        // 保存更新后的位置和边缘状态
-        safeStorageSet({ ballPosition: position });
+        const edgeClass = EDGE_CLASSES.find((className) => ball.classList.contains(className));
+        const edge = edgeClass ? edgeClass.replace('edge-', '') : 'right';
+        applyBallPosition(dockedPosition(edge, rect.left, rect.top));
     });
 
     document.body.appendChild(container);
@@ -810,6 +1134,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 void activeDialogSyncController.applyMentorFlavorUpdate(request.mentorFlavor, true);
             }
             sendResponse({ status: 'ok' });
+        } else if (request.action === 'sessionReset') {
+            // 后端因 URL 变化/刷新等清空了会话，前端在此刷新 UI
+            if (activeDialogSyncController
+                && typeof activeDialogSyncController.performSessionReset === 'function') {
+                void activeDialogSyncController.performSessionReset(request.reason);
+            }
+            sendResponse({ status: 'ok' });
         }
     } catch (error) {
         console.error('处理消息时出错:', error);
@@ -971,6 +1302,12 @@ async function initializeDialog(dialog) {
             const meta = CHAT_MODE_META[currentChatMode];
             chatModeHint.textContent = meta.hint;
             chatModeHint.className = `storage-mode-hint ${meta.hintClass}`;
+
+            // 只在"不入库"模式下展示 📥 入库按钮；已是入库模式时隐藏避免误点。
+            const persistBtn = dialog.querySelector('#persistToggle');
+            if (persistBtn) {
+                persistBtn.hidden = Boolean(meta.shouldPersist);
+            }
         }
 
         async function applyChatModeUpdate(chatMode, reloadOnly) {
@@ -986,6 +1323,31 @@ async function initializeDialog(dialog) {
         const mentorToggle = dialog.querySelector('#mentorToggle');
         const mentorPopover = dialog.querySelector('#mentorPopover');
 
+        // 本地缓存用户在设置页自定义的 label / prompt 覆盖；
+        // 首次异步加载，之后通过 storage.onChanged 监听更新
+        const mentorOverrides = { prompts: {}, labels: {} };
+        function refreshMentorOverrides(cb) {
+            try {
+                chrome.storage.sync.get({ mentorPrompts: {}, mentorLabels: {} }, ({ mentorPrompts, mentorLabels }) => {
+                    mentorOverrides.prompts = mentorPrompts || {};
+                    mentorOverrides.labels = mentorLabels || {};
+                    if (cb) cb();
+                });
+            } catch (e) { /* context invalidated */ }
+        }
+
+        function mentorLabelFor(flavor) {
+            return MentorAPI && MentorAPI.resolveMentorLabel
+                ? MentorAPI.resolveMentorLabel(flavor, mentorOverrides.labels)
+                : (MentorAPI?.MENTOR_META?.[flavor]?.label || flavor);
+        }
+
+        function mentorHasPrompt(flavor) {
+            if (!MentorAPI) return false;
+            const resolved = MentorAPI.resolveMentorPrompt(flavor, mentorOverrides.prompts) || '';
+            return Boolean(resolved.trim());
+        }
+
         function buildMentorPopover() {
             if (!mentorPopover || !MentorAPI) return;
             const flavors = [
@@ -993,16 +1355,27 @@ async function initializeDialog(dialog) {
                 MentorAPI.MENTOR_FLAVORS.ALGORITHM,
                 MentorAPI.MENTOR_FLAVORS.PYTHON,
                 MentorAPI.MENTOR_FLAVORS.FEYNMAN,
-                MentorAPI.MENTOR_FLAVORS.GENERAL
+                MentorAPI.MENTOR_FLAVORS.GENERAL,
+                MentorAPI.MENTOR_FLAVORS.CUSTOM_1,
+                MentorAPI.MENTOR_FLAVORS.CUSTOM_2,
+                MentorAPI.MENTOR_FLAVORS.CUSTOM_3
             ];
             mentorPopover.innerHTML = flavors.map((f) => {
                 const meta = MentorAPI.MENTOR_META[f];
                 const active = f === currentMentorFlavor ? ' active' : '';
-                return `<button type="button" class="mentor-item${active}" data-flavor="${f}" role="menuitemradio" aria-checked="${f === currentMentorFlavor}">
+                const isCustom = MentorAPI.isCustomMentorSlot(f);
+                const hasPrompt = mentorHasPrompt(f);
+                // 自定义槽位若未填入提示词，用灰字提示"未设置"
+                const label = mentorLabelFor(f);
+                const hint = isCustom && !hasPrompt
+                    ? '（空槽位：去设置页填入提示词后才会生效）'
+                    : meta.hint;
+                const extraClass = isCustom && !hasPrompt ? ' empty-slot' : '';
+                return `<button type="button" class="mentor-item${active}${extraClass}" data-flavor="${f}" role="menuitemradio" aria-checked="${f === currentMentorFlavor}">
                     <span class="mentor-item-icon">${meta.icon}</span>
                     <span class="mentor-item-main">
-                        <span class="mentor-item-label">${meta.label}</span>
-                        <span class="mentor-item-hint">${meta.hint}</span>
+                        <span class="mentor-item-label">${label}</span>
+                        <span class="mentor-item-hint">${hint}</span>
                     </span>
                 </button>`;
             }).join('');
@@ -1015,12 +1388,24 @@ async function initializeDialog(dialog) {
             mentorToggle.setAttribute('aria-pressed', isOn ? 'true' : 'false');
             mentorToggle.classList.toggle('active', isOn);
             const meta = MentorAPI.getMentorMeta(currentMentorFlavor);
+            const label = mentorLabelFor(currentMentorFlavor);
             mentorToggle.title = isOn
-                ? `带教模式：${meta.label}（点击切换）`
+                ? `带教模式：${label}（点击切换）`
                 : '学习带教模式（苏格拉底式引导）';
             mentorToggle.textContent = isOn ? meta.icon : '🎓';
             buildMentorPopover();
         }
+
+        // 首次加载并监听设置变更 → 重建弹层
+        refreshMentorOverrides(() => buildMentorPopover());
+        try {
+            chrome.storage.onChanged.addListener((changes, area) => {
+                if (area !== 'sync') return;
+                if (changes.mentorPrompts || changes.mentorLabels) {
+                    refreshMentorOverrides(() => buildMentorPopover());
+                }
+            });
+        } catch (e) { /* context invalidated */ }
 
         function hideMentorPopover() {
             if (mentorPopover) mentorPopover.hidden = true;
@@ -1031,9 +1416,17 @@ async function initializeDialog(dialog) {
             updateMentorUI(flavor);
             if (!silent && prev !== currentMentorFlavor) {
                 const meta = MentorAPI.getMentorMeta(currentMentorFlavor);
-                const tip = MentorAPI.isMentorActive(currentMentorFlavor)
-                    ? `已开启带教模式：${meta.label}。${meta.hint}`
-                    : '已关闭带教模式。';
+                const label = mentorLabelFor(currentMentorFlavor);
+                const isCustomEmpty = MentorAPI.isCustomMentorSlot(currentMentorFlavor)
+                    && !mentorHasPrompt(currentMentorFlavor);
+                let tip;
+                if (!MentorAPI.isMentorActive(currentMentorFlavor)) {
+                    tip = '已关闭带教模式。';
+                } else if (isCustomEmpty) {
+                    tip = `已选中"${label}"，但该槽位的提示词还没填；请到扩展设置里填入后再使用。`;
+                } else {
+                    tip = `已开启带教模式：${label}。${meta.hint}`;
+                }
                 addMessage(tip, false);
             }
         }
@@ -1081,7 +1474,32 @@ async function initializeDialog(dialog) {
             tabId,
             applyChatModeUpdate,
             applyMentorFlavorUpdate,
-            resetMessagesUI: () => resetMessagesUI()
+            resetMessagesUI: () => resetMessagesUI(),
+            // 后端因为 tab URL 变化等原因清空了会话，通知前端也把对话框 UI 重置
+            performSessionReset: async (reason) => {
+                try {
+                    // 若正在生成，先关掉端口防止残留事件把新 UI 又污染掉
+                    if (currentPort) {
+                        try { currentPort.disconnect(); } catch (_) { /* ignore */ }
+                        currentPort = null;
+                    }
+                    isGenerating = false;
+                    if (userInput) userInput.disabled = false;
+                    if (askButton) {
+                        askButton.disabled = false;
+                        askButton.classList.remove('generating');
+                    }
+                    resetMessagesUI();
+                    await loadHistory();
+                    if (reason === 'tab-url-changed' || reason === 'tab-loading') {
+                        showNotification('页面已切换，已开启新会话');
+                    } else if (reason === 'page-content-changed' || reason === 'page-title-changed') {
+                        showNotification('检测到页面内容变化，已开启新会话');
+                    }
+                } catch (err) {
+                    console.error('performSessionReset 失败:', err);
+                }
+            }
         };
 
         // 加载历史会话
@@ -1913,21 +2331,35 @@ async function initializeDialog(dialog) {
         });
 
         // ===== /commands 提示词模板菜单 =====
-        const SLASH_TEMPLATES = [
-            { name: 'summarize', title: '五条要点总结',   prompt: '请用 5 条要点总结这篇内容。' },
-            { name: 'tldr',      title: 'TL;DR 一句话概括', prompt: '请用一句话概括核心观点（不超过 40 字）。' },
-            { name: 'translate-zh', title: '翻译为中文', prompt: '请把上述内容完整翻译成中文，保留原有的 Markdown/列表结构。' },
-            { name: 'translate-en', title: '翻译为英文', prompt: 'Please translate the above content into English, preserving the Markdown structure.' },
-            { name: 'explain',   title: '通俗讲解',       prompt: '请用通俗易懂的语言（面向初学者）解释上述内容，适当举例。' },
-            { name: 'outline',   title: '生成大纲',       prompt: '请为上述内容生成一个多层级的 Markdown 结构化大纲。' },
-            { name: 'keypoints', title: '抽取核心要点',   prompt: '请列出上述内容中 5-8 个关键信息点，用项目符号呈现。' },
-            { name: 'qa',        title: '出 5 道练习题', prompt: '基于上述内容出 5 道理解题，并在每题后给出参考答案。' },
-            { name: 'quiz',      title: '🎯 自测（本次会话）', prompt: '请基于我们这次会话已经讨论过的知识点，出 3 道自测题（由浅到深）。每题要求：(1) 只出题，先**不要**给答案；(2) 题型用"简答 / 判断 / 应用题"混合；(3) 题目要针对我表达中不够清晰的地方。最后一行加一句："请先尝试作答，回复后我再批改。"' },
-            { name: 'feynman',   title: '🧠 费曼：让我讲给你听', prompt: '从现在开始请扮演一个对这个话题**完全不懂**的学生，我来把刚才学到的内容讲给你听。请严格遵守：(1) 不要主动展示你知道；(2) 每次只追问 1-2 个我讲得最含糊的词或句子；(3) 用"我听不懂…能换个说法吗？"或"能再举个日常例子吗？"这种方式追问。我准备好了，先问我一句："你想给我讲清楚什么？"' },
-            { name: 'deepdive',  title: '🔍 针对上一句深挖',   prompt: '请针对你上一条回答中**最关键**或**最不容易理解**的那一句话，深入讲清楚：包括 (1) 它的精确含义；(2) 为什么这么说；(3) 一个最小的具体例子；(4) 常见的误解。' },
-            { name: 'rewrite',   title: '改写更清晰',     prompt: '请改写上述内容，让表达更清晰凝练，保留原意。' },
-            { name: 'counter',   title: '反驳/质疑角度', prompt: '请从另一个角度反驳/质疑上述内容，列出 3-5 条潜在问题或反例。' }
-        ];
+        // 默认模板来自 shared/slashCommands.js；用户可在设置页覆盖/增删改。
+        // 本地缓存在 slashTemplates 里，storage 变更时会自动同步。
+        const SlashAPI = self.WebChatSlash || null;
+        const DEFAULT_SLASH = SlashAPI ? SlashAPI.DEFAULT_SLASH_COMMANDS : [];
+        let slashTemplates = DEFAULT_SLASH.slice();
+
+        function refreshSlashTemplates() {
+            try {
+                chrome.storage.sync.get({ slashCommands: null }, ({ slashCommands }) => {
+                    if (Array.isArray(slashCommands) && slashCommands.length > 0) {
+                        const normalized = SlashAPI
+                            ? SlashAPI.normalizeSlashCommands(slashCommands)
+                            : slashCommands;
+                        slashTemplates = normalized.length > 0 ? normalized : DEFAULT_SLASH.slice();
+                    } else {
+                        slashTemplates = DEFAULT_SLASH.slice();
+                    }
+                });
+            } catch (e) { /* context invalidated */ }
+        }
+
+        refreshSlashTemplates();
+        try {
+            chrome.storage.onChanged.addListener((changes, area) => {
+                if (area === 'sync' && changes.slashCommands) {
+                    refreshSlashTemplates();
+                }
+            });
+        } catch (e) { /* ignore */ }
 
         const slashMenu = dialog.querySelector('#slashMenu');
         let slashActive = false;
@@ -1949,8 +2381,8 @@ async function initializeDialog(dialog) {
             if (!slashMenu) return;
             const f = (filter || '').toLowerCase();
             const list = !f
-                ? SLASH_TEMPLATES.slice()
-                : SLASH_TEMPLATES.filter(t => t.name.toLowerCase().startsWith(f) || t.title.toLowerCase().includes(f));
+                ? slashTemplates.slice()
+                : slashTemplates.filter(t => t.name.toLowerCase().startsWith(f) || t.title.toLowerCase().includes(f));
             if (!list.length) {
                 hideSlashMenu();
                 return;

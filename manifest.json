@@ -1,6 +1,6 @@
 {
     "manifest_version": 3,
-    "name": "WebChat - 网页内容增强问答助手",
+    "name": "PageLens AI - 网页内容增强问答助手",
     "version": "1.0",
     "description": "基于当前网页内容的AI增强问答系统",
     "icons": {
@@ -35,7 +35,7 @@
                 "default": "Ctrl+Shift+K",
                 "mac": "Command+Shift+K"
             },
-            "description": "打开/关闭 WebChat 侧边面板"
+            "description": "打开/关闭 PageLens AI 侧边面板"
         }
     },
     "options_page": "options/options.html",
@@ -48,6 +48,7 @@
                 "lib/marked.min.js",
                 "shared/chatModes.js",
                 "shared/mentorModes.js",
+                "shared/slashCommands.js",
                 "content.js"
             ],
             "css": [

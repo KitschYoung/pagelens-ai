@@ -3,9 +3,10 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>WebChat - 设置</title>
+    <title>PageLens AI - 设置</title>
     <link rel="stylesheet" href="options.css">
     <script src="../shared/mentorModes.js"></script>
+    <script src="../shared/slashCommands.js"></script>
 </head>
 
 <body>
@@ -25,6 +26,17 @@
                     <input type="checkbox" id="enableContext" checked>
                     启用上下文聊天（包含历史对话记录）
                 </label>
+            </div>
+            <div class="setting-item">
+                <label for="floatingIconUpload">悬浮球图案</label>
+                <div class="floating-icon-row">
+                    <div id="floatingIconPreview" class="floating-icon-preview" aria-label="当前悬浮球图案"></div>
+                    <div class="floating-icon-actions">
+                        <input type="file" id="floatingIconUpload" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml">
+                        <button id="clearFloatingIcon" type="button" class="secondary-button">恢复默认图案</button>
+                    </div>
+                </div>
+                <div class="help-text">支持 PNG、JPG、WebP、SVG、GIF；文件上限 5 MB，GIF 会保留动画。</div>
             </div>
             <div id="contextSettings" class="sub-settings">
                 <div class="setting-item">
@@ -49,6 +61,19 @@
                 这些是"带教"模式背后的系统提示词。**留空**使用内置默认；想自定义就直接在框里改。修改立即生效（下一轮对话开始使用新提示词）。
             </p>
             <div id="mentorPromptsContainer"></div>
+        </div>
+
+        <div class="settings-section">
+            <h2>⚡ Slash 快捷指令</h2>
+            <p class="help-text" style="margin: 0 0 12px 0;">
+                在输入框输入 <code>/</code> 会弹出快捷指令列表。你可以自由增删改，数据存在 <code>chrome.storage.sync.slashCommands</code>。
+                指令名只能包含字母、数字、下划线、连字符；名称和提示词都不能为空。
+            </p>
+            <div id="slashCommandsContainer" class="slash-cmd-list"></div>
+            <div class="slash-cmd-toolbar">
+                <button id="addSlashCmd" type="button" class="secondary-button">＋ 新增指令</button>
+                <button id="resetSlashCmd" type="button" class="secondary-button">还原默认指令列表</button>
+            </div>
         </div>
 
         <div class="settings-section">
@@ -128,12 +153,12 @@
                 </div>
                 <div class="form-group">
                     <label for="sessionLogOutputDir">日志输出目录</label>
-                    <input type="text" id="sessionLogOutputDir" placeholder="~/webchat-session-logs">
-                    <small class="help-text">默认写入 `~/webchat-session-logs`。</small>
+                    <input type="text" id="sessionLogOutputDir" placeholder="~/pagelens-session-logs">
+                    <small class="help-text">默认写入 `~/pagelens-session-logs`。</small>
                 </div>
                 <div class="form-group">
                     <label for="sessionLogWorkspaceRoot">工作区根目录</label>
-                    <input type="text" id="sessionLogWorkspaceRoot" placeholder="~/webchat-workspace">
+                    <input type="text" id="sessionLogWorkspaceRoot" placeholder="~/pagelens-workspace">
                     <small class="help-text">用于在日志元数据中记录你的工作区来源。</small>
                 </div>
                 <div class="form-group">

@@ -4,24 +4,41 @@
     top: 0;
     width: 100%;
     height: 100%;
-    background-color: #007AFF;
+    background: linear-gradient(145deg, #ff8fb4 0%, #f36a9c 100%);
+    border: 6px solid #fff;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 8px 24px rgba(244, 111, 159, 0.28), 0 2px 8px rgba(0, 0, 0, 0.12);
     z-index: 2147483646;
     font-size: 24px;
     color: white;
-    transition: transform 0.3s ease, background-color 0.3s ease;
+    box-sizing: border-box;
+    overflow: hidden;
+    transition: background 0.2s ease, box-shadow 0.2s ease;
     user-select: none;
     pointer-events: auto;
 }
 
 #ai-assistant-ball:hover {
-    transform: scale(1.1);
-    background-color: #0056b3;
+    background: linear-gradient(145deg, #ff9ec0 0%, #ef5f94 100%);
+    box-shadow: 0 10px 28px rgba(244, 111, 159, 0.34), 0 4px 12px rgba(0, 0, 0, 0.16);
+}
+
+#ai-assistant-ball .icon {
+    width: 24px;
+    height: 24px;
+    filter: drop-shadow(0 1px 1px rgba(110, 30, 65, 0.22));
+}
+
+#ai-assistant-ball .custom-floating-icon {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    filter: none;
 }
 
 /* 侧边栏模式：默认停靠右侧，整页高度，挤压网页内容 */
@@ -100,10 +117,12 @@ html.ai-assistant-panel-open .ball-container {
 }
 
 #ai-assistant-dialog .header-main {
+    /* 改为两行堆叠：第 1 行放会话模式按钮组；第 2 行放右侧工具图标。
+       之前水平挤在一行，窄面板下图标会压住模式按钮。 */
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
 }
 
 #ai-assistant-dialog .chat-mode-control {
@@ -445,11 +464,12 @@ html.ai-assistant-panel-open .ball-container {
     color: #333;
 }
 
+/* 第二处 .header-main 覆盖：保持与上面一致（不再 flex-row）。 */
 #ai-assistant-dialog .header-main {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     color: #333;
 }
 
@@ -636,48 +656,21 @@ html.ai-assistant-panel-open .ball-container {
     }
 }
 
-/* 悬浮球边缘状态样式 */
+/* 悬浮球边缘驻留状态：完整露出并贴住边缘 */
 #ai-assistant-ball.edge-left {
-    transform: translateX(-50%) !important;
     left: 0 !important;
-    transition: all 0.3s ease;
 }
 
 #ai-assistant-ball.edge-right {
-    transform: translateX(50%) !important;
-    right: 0 !important;
-    left: auto !important;
-    transition: all 0.3s ease;
+    left: 0 !important;
 }
 
 #ai-assistant-ball.edge-top {
-    transform: translateY(-50%) !important;
     top: 0 !important;
-    transition: all 0.3s ease;
 }
 
 #ai-assistant-ball.edge-bottom {
-    transform: translateY(50%) !important;
-    bottom: 0 !important;
-    top: auto !important;
-    transition: all 0.3s ease;
-}
-
-/* 悬浮时恢复完整大小 */
-#ai-assistant-ball.edge-left:hover {
-    transform: translateX(0) !important;
-}
-
-#ai-assistant-ball.edge-right:hover {
-    transform: translateX(0) !important;
-}
-
-#ai-assistant-ball.edge-top:hover {
-    transform: translateY(0) !important;
-}
-
-#ai-assistant-ball.edge-bottom:hover {
-    transform: translateY(0) !important;
+    top: 0 !important;
 }
 
 /* 右键菜单样式 */
@@ -709,9 +702,37 @@ html.ai-assistant-panel-open .ball-container {
 /* 修改悬浮球和设置按钮的容器样式 */
 .ball-container {
     position: fixed;
-    z-index: 9999;
-    width: 50px;
-    height: 50px;
+    z-index: 2147483646;
+    width: 58px;
+    height: 58px;
+    transform: translate3d(0, 0, 0);
+    transition: transform 0.2s ease, left 0.2s ease, top 0.2s ease, right 0.2s ease, bottom 0.2s ease;
+}
+
+.ball-container.edge-right:hover {
+    transform: translateX(-6px);
+}
+
+.ball-container.edge-left:hover {
+    transform: translateX(6px);
+}
+
+.ball-container.edge-top:hover {
+    transform: translateY(6px);
+}
+
+.ball-container.edge-bottom:hover {
+    transform: translateY(-6px);
+}
+
+.ball-container[data-dragging="true"] {
+    transform: translate3d(0, 0, 0) !important;
+}
+
+.ball-container[data-dragging="true"] .settings-button {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: translateX(-50%) scale(0.8) !important;
 }
 
 /* 创建一个hover区域，包含悬浮球和设置按钮 */
@@ -829,10 +850,13 @@ html.ai-assistant-panel-open .ball-container {
     background: rgba(0, 122, 255, 0.25) !important;
 }
 
-/* 头部右侧的面板操作按钮（切换左右、关闭） */
+/* 头部右侧的面板操作按钮（切换左右、关闭）
+   现在独占第 2 行；靠右对齐，溢出时允许 wrap。 */
 #ai-assistant-dialog .panel-actions {
     display: flex !important;
     align-items: center !important;
+    justify-content: flex-end !important;
+    flex-wrap: wrap !important;
     gap: 4px !important;
     flex-shrink: 0 !important;
 }
@@ -842,6 +866,9 @@ html.ai-assistant-panel-open .ball-container {
 #ai-assistant-dialog .panel-clear,
 #ai-assistant-dialog .panel-mentor,
 #ai-assistant-dialog .panel-annotate,
+#ai-assistant-dialog .panel-history,
+#ai-assistant-dialog .panel-persist,
+#ai-assistant-dialog .panel-settings,
 #ai-assistant-dialog .panel-width-cycle {
     width: 26px !important;
     height: 26px !important;
@@ -864,6 +891,9 @@ html.ai-assistant-panel-open .ball-container {
 #ai-assistant-dialog .panel-clear:hover,
 #ai-assistant-dialog .panel-mentor:hover,
 #ai-assistant-dialog .panel-annotate:hover,
+#ai-assistant-dialog .panel-history:hover,
+#ai-assistant-dialog .panel-persist:hover,
+#ai-assistant-dialog .panel-settings:hover,
 #ai-assistant-dialog .panel-width-cycle:hover {
     background: #eef2f7 !important;
     color: #111 !important;
@@ -996,6 +1026,15 @@ webchat-hl:hover {
 #ai-assistant-dialog .mentor-item.active {
     background: #eef2ff !important;
     color: #1d4ed8 !important;
+}
+
+#ai-assistant-dialog .mentor-item.empty-slot .mentor-item-label {
+    color: #9ca3af !important;
+    font-weight: 500 !important;
+}
+#ai-assistant-dialog .mentor-item.empty-slot .mentor-item-hint {
+    color: #b0b6be !important;
+    font-style: italic !important;
 }
 
 #ai-assistant-dialog .mentor-item-icon {
@@ -1222,4 +1261,215 @@ webchat-hl:hover {
     z-index: 1 !important;
     user-select: none !important;
     display: none !important;
+}
+
+/* ===== 📚 本页历史按钮 + 徽章 ===== */
+#ai-assistant-dialog .panel-history {
+    position: relative !important;
+}
+
+#ai-assistant-dialog .panel-history[aria-pressed="true"] {
+    background: #eef2f7 !important;
+    color: #111 !important;
+}
+
+#ai-assistant-dialog .panel-history .history-count {
+    position: absolute !important;
+    top: -2px !important;
+    right: -2px !important;
+    min-width: 14px !important;
+    height: 14px !important;
+    padding: 0 3px !important;
+    border-radius: 7px !important;
+    background: #ef4444 !important;
+    color: #fff !important;
+    font-size: 10px !important;
+    line-height: 14px !important;
+    text-align: center !important;
+    font-weight: 600 !important;
+    box-sizing: border-box !important;
+    box-shadow: 0 0 0 1.5px #fff !important;
+    pointer-events: none !important;
+}
+
+#ai-assistant-dialog .panel-history .history-count[hidden] {
+    display: none !important;
+}
+
+/* ===== 本页历史对话抽屉（浮在 chat-container 内，覆盖 messages） ===== */
+#ai-assistant-dialog .history-drawer {
+    position: absolute !important;
+    inset: 0 !important;
+    background: #ffffff !important;
+    display: flex !important;
+    flex-direction: column !important;
+    z-index: 10 !important;
+    box-shadow: inset 0 0 0 1px #e5e7eb !important;
+    animation: webchat-hd-fade 0.12s ease-out !important;
+}
+
+#ai-assistant-dialog .history-drawer[hidden] {
+    display: none !important;
+}
+
+@keyframes webchat-hd-fade {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+#ai-assistant-dialog .history-drawer-head {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 10px 14px !important;
+    border-bottom: 1px solid #eef0f2 !important;
+    background: #f9fafb !important;
+    font-weight: 600 !important;
+    color: #111827 !important;
+    flex-shrink: 0 !important;
+}
+
+#ai-assistant-dialog .history-drawer-head .hd-title {
+    font-size: 13px !important;
+}
+
+#ai-assistant-dialog .history-drawer-head .hd-close {
+    width: 22px !important;
+    height: 22px !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    color: #6b7280 !important;
+    font-size: 18px !important;
+    line-height: 1 !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+}
+
+#ai-assistant-dialog .history-drawer-head .hd-close:hover {
+    background: #e5e7eb !important;
+    color: #111 !important;
+}
+
+#ai-assistant-dialog .history-drawer-body {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 8px 10px !important;
+    background: #ffffff !important;
+}
+
+#ai-assistant-dialog .history-drawer-body .hd-empty {
+    padding: 24px 12px !important;
+    text-align: center !important;
+    color: #9ca3af !important;
+    font-size: 12.5px !important;
+    line-height: 1.55 !important;
+}
+
+#ai-assistant-dialog .history-drawer-body .hd-empty.hd-error {
+    color: #b91c1c !important;
+}
+
+#ai-assistant-dialog .hd-item {
+    border: 1px solid #e5e7eb !important;
+    border-radius: 8px !important;
+    padding: 10px 12px !important;
+    margin-bottom: 8px !important;
+    background: #fff !important;
+    cursor: pointer !important;
+    transition: border-color 0.15s, box-shadow 0.15s !important;
+}
+
+#ai-assistant-dialog .hd-item:hover {
+    border-color: #93c5fd !important;
+    box-shadow: 0 0 0 2px rgba(147, 197, 253, 0.2) !important;
+}
+
+#ai-assistant-dialog .hd-item-head {
+    display: flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    margin-bottom: 4px !important;
+    font-size: 12.5px !important;
+}
+
+#ai-assistant-dialog .hd-item-head .hd-mode-icon {
+    flex-shrink: 0 !important;
+    font-size: 13px !important;
+}
+
+#ai-assistant-dialog .hd-item-head .hd-title-text {
+    flex: 1 !important;
+    color: #111827 !important;
+    font-weight: 600 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+#ai-assistant-dialog .hd-item-head .hd-time {
+    flex-shrink: 0 !important;
+    color: #9ca3af !important;
+    font-size: 11px !important;
+}
+
+#ai-assistant-dialog .hd-item-meta {
+    font-size: 11px !important;
+    color: #6b7280 !important;
+    margin-bottom: 4px !important;
+}
+
+#ai-assistant-dialog .hd-preview {
+    font-size: 12px !important;
+    color: #4b5563 !important;
+    line-height: 1.5 !important;
+    max-height: 48px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    display: -webkit-box !important;
+    -webkit-line-clamp: 2 !important;
+    line-clamp: 2 !important;
+    -webkit-box-orient: vertical !important;
+    margin-bottom: 6px !important;
+}
+
+#ai-assistant-dialog .hd-item-actions {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 6px !important;
+}
+
+#ai-assistant-dialog .hd-item-actions .hd-restore {
+    padding: 3px 10px !important;
+    border: 1px solid #3b82f6 !important;
+    background: #3b82f6 !important;
+    color: #fff !important;
+    border-radius: 4px !important;
+    font-size: 12px !important;
+    cursor: pointer !important;
+    line-height: 1.4 !important;
+}
+
+#ai-assistant-dialog .hd-item-actions .hd-restore:hover {
+    background: #2563eb !important;
+    border-color: #2563eb !important;
+}
+
+#ai-assistant-dialog .hd-item-actions .hd-delete {
+    width: 22px !important;
+    height: 22px !important;
+    padding: 0 !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    color: #9ca3af !important;
+    font-size: 12px !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    line-height: 1 !important;
+}
+
+#ai-assistant-dialog .hd-item-actions .hd-delete:hover {
+    background: #fee2e2 !important;
+    color: #b91c1c !important;
 }

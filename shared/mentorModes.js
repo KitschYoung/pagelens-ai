@@ -9,8 +9,24 @@
         ALGORITHM: 'algorithm',
         PYTHON: 'python',
         GENERAL: 'general',
-        FEYNMAN: 'feynman'
+        FEYNMAN: 'feynman',
+        // 用户可自定义的 3 个空位：行为上和内置带教一样，
+        // 但默认 systemPrompt 为空，label 可通过 settings.mentorLabels 覆盖
+        CUSTOM_1: 'custom_1',
+        CUSTOM_2: 'custom_2',
+        CUSTOM_3: 'custom_3'
     };
+
+    // 用于判断某个 flavor 是否是"用户槽位"（走不同的 UI 分支）
+    const CUSTOM_MENTOR_SLOTS = [
+        MENTOR_FLAVORS.CUSTOM_1,
+        MENTOR_FLAVORS.CUSTOM_2,
+        MENTOR_FLAVORS.CUSTOM_3
+    ];
+
+    function isCustomMentorSlot(flavor) {
+        return CUSTOM_MENTOR_SLOTS.includes(flavor);
+    }
 
     const DEFAULT_MENTOR_FLAVOR = MENTOR_FLAVORS.OFF;
 
@@ -103,6 +119,25 @@
                 '- 按 "先测试已有理解 → 补充关键概念 → 小练习 → 总结" 循环推进。',
                 '- 总结阶段输出 Markdown 笔记（含：核心概念、易混淆点、一张"自测题"、复习时间表）。'
             ].join('\n')
+        },
+        // 3 个空白自定义槽位：默认 systemPrompt 为空，用户在设置页填入
+        [MENTOR_FLAVORS.CUSTOM_1]: {
+            label: '自定义 1',
+            icon: '✨',
+            hint: '自定义系统提示词（在设置页编辑）。留空则视同关闭。',
+            systemPrompt: ''
+        },
+        [MENTOR_FLAVORS.CUSTOM_2]: {
+            label: '自定义 2',
+            icon: '💡',
+            hint: '自定义系统提示词（在设置页编辑）。留空则视同关闭。',
+            systemPrompt: ''
+        },
+        [MENTOR_FLAVORS.CUSTOM_3]: {
+            label: '自定义 3',
+            icon: '📚',
+            hint: '自定义系统提示词（在设置页编辑）。留空则视同关闭。',
+            systemPrompt: ''
         }
     };
 
@@ -143,8 +178,21 @@
         return `${mentor}\n\n---\n（用户原有系统提示词，仅作为背景参考）\n${base}`;
     }
 
+    // 在 UI 显示时用的 label：优先看用户覆盖，其次内置 meta
+    function resolveMentorLabel(flavor, labelOverrides) {
+        const norm = normalizeMentorFlavor(flavor);
+        if (labelOverrides && typeof labelOverrides === 'object') {
+            const raw = labelOverrides[norm];
+            if (typeof raw === 'string' && raw.trim()) return raw.trim();
+        }
+        const meta = MENTOR_META[norm];
+        return (meta && meta.label) || norm;
+    }
+
     const api = {
         MENTOR_FLAVORS,
+        CUSTOM_MENTOR_SLOTS,
+        isCustomMentorSlot,
         DEFAULT_MENTOR_FLAVOR,
         MENTOR_META,
         normalizeMentorFlavor,
@@ -152,6 +200,7 @@
         getMentorMeta,
         getDefaultMentorPrompt,
         resolveMentorPrompt,
+        resolveMentorLabel,
         buildMentorSystemPrompt
     };
 

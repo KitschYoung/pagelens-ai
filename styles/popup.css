@@ -315,6 +315,15 @@ body .mentor-item.active {
     color: #1d4ed8;
 }
 
+body .mentor-item.empty-slot .mentor-item-label {
+    color: #9ca3af;
+    font-weight: 500;
+}
+body .mentor-item.empty-slot .mentor-item-hint {
+    color: #b0b6be;
+    font-style: italic;
+}
+
 body .mentor-item-icon {
     font-size: 16px;
     line-height: 1.2;
