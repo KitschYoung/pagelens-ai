@@ -866,6 +866,8 @@ html.ai-assistant-panel-open .ball-container {
 #ai-assistant-dialog .panel-clear,
 #ai-assistant-dialog .panel-mentor,
 #ai-assistant-dialog .panel-annotate,
+#ai-assistant-dialog .panel-page-content,
+#ai-assistant-dialog .panel-context-dump,
 #ai-assistant-dialog .panel-history,
 #ai-assistant-dialog .panel-persist,
 #ai-assistant-dialog .panel-settings,
@@ -891,6 +893,7 @@ html.ai-assistant-panel-open .ball-container {
 #ai-assistant-dialog .panel-clear:hover,
 #ai-assistant-dialog .panel-mentor:hover,
 #ai-assistant-dialog .panel-annotate:hover,
+#ai-assistant-dialog .panel-page-content:hover,
 #ai-assistant-dialog .panel-history:hover,
 #ai-assistant-dialog .panel-persist:hover,
 #ai-assistant-dialog .panel-settings:hover,
@@ -937,6 +940,110 @@ html.ai-assistant-panel-open .ball-container {
 #ai-assistant-dialog .panel-annotate.loading {
     opacity: 0.6 !important;
     pointer-events: none !important;
+}
+
+/* ===== 页面正文查看抽屉 ===== */
+#ai-assistant-dialog .page-content-drawer {
+    position: absolute !important;
+    inset: 0 !important;
+    background: #ffffff !important;
+    display: flex !important;
+    flex-direction: column !important;
+    z-index: 10 !important;
+    box-shadow: inset 0 0 0 1px #e5e7eb !important;
+    animation: webchat-hd-fade 0.12s ease-out !important;
+}
+
+#ai-assistant-dialog .page-content-drawer[hidden] {
+    display: none !important;
+}
+
+#ai-assistant-dialog .page-content-drawer-body {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 8px 14px !important;
+    background: #ffffff !important;
+}
+
+#ai-assistant-dialog .history-drawer-head .hd-copy {
+    width: 22px !important;
+    height: 22px !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    color: #6b7280 !important;
+    font-size: 13px !important;
+    line-height: 1 !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+}
+
+#ai-assistant-dialog .history-drawer-head .hd-copy:hover {
+    background: #e5e7eb !important;
+    color: #111 !important;
+}
+
+/* ===== 完整上下文查看抽屉 ===== */
+#ai-assistant-dialog .context-dump-drawer {
+    position: absolute !important;
+    inset: 0 !important;
+    background: #ffffff !important;
+    display: flex !important;
+    flex-direction: column !important;
+    z-index: 10 !important;
+    box-shadow: inset 0 0 0 1px #e5e7eb !important;
+    animation: webchat-hd-fade 0.12s ease-out !important;
+}
+
+#ai-assistant-dialog .context-dump-drawer[hidden] {
+    display: none !important;
+}
+
+#ai-assistant-dialog .context-dump-drawer-body {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: 8px 14px !important;
+    background: #ffffff !important;
+}
+
+#ai-assistant-dialog .ctx-item {
+    border: 1px solid #e5e7eb !important;
+    border-radius: 6px !important;
+    margin-bottom: 8px !important;
+    overflow: hidden !important;
+}
+
+#ai-assistant-dialog .ctx-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    padding: 6px 10px !important;
+    background: #f9fafb !important;
+    border-bottom: 1px solid #e5e7eb !important;
+}
+
+#ai-assistant-dialog .ctx-role {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+}
+
+#ai-assistant-dialog .ctx-len {
+    font-size: 11px !important;
+    color: #9ca3af !important;
+}
+
+#ai-assistant-dialog .ctx-content {
+    padding: 8px 10px !important;
+    margin: 0 !important;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+    color: #374151 !important;
+    max-height: 300px !important;
+    overflow-y: auto !important;
+    background: #fff !important;
+    border: none !important;
 }
 
 webchat-hl {

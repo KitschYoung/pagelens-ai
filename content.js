@@ -174,6 +174,8 @@ function createDialog() {
                             <div class="mentor-popover" id="mentorPopover" hidden role="menu" aria-label="选择带教风格"></div>
                         </div>
                         <button type="button" class="panel-annotate" id="annotateToggle" title="识别并标注本页关键概念（点击开启/关闭）" aria-pressed="false">📍</button>
+                        <button type="button" class="panel-page-content" id="pageContentToggle" title="查看提取到的网页正文">📄</button>
+                        <button type="button" class="panel-context-dump" id="contextDumpToggle" title="查看发给 AI 的完整上下文（系统提示词 + 网页正文 + 对话历史）">🔍</button>
                         <button type="button" class="panel-history" id="historyToggle" title="查看本页历史对话" aria-pressed="false">
                             <span class="history-icon">📚</span><span class="history-count" hidden>0</span>
                         </button>
@@ -196,6 +198,26 @@ function createDialog() {
                     <button type="button" class="hd-close" id="historyDrawerClose" title="关闭">×</button>
                 </div>
                 <div class="history-drawer-body" id="historyDrawerBody">
+                    <div class="hd-empty">加载中…</div>
+                </div>
+            </div>
+            <div class="page-content-drawer" id="pageContentDrawer" hidden>
+                <div class="history-drawer-head">
+                    <span class="hd-title">📄 提取到的网页正文</span>
+                    <button type="button" class="hd-copy" id="pageContentCopy" title="复制全部内容">📋</button>
+                    <button type="button" class="hd-close" id="pageContentDrawerClose" title="关闭">×</button>
+                </div>
+                <div class="page-content-drawer-body" id="pageContentDrawerBody">
+                    <div class="hd-empty">加载中…</div>
+                </div>
+            </div>
+            <div class="context-dump-drawer" id="contextDumpDrawer" hidden>
+                <div class="history-drawer-head">
+                    <span class="hd-title">🔍 完整上下文</span>
+                    <button type="button" class="hd-copy" id="contextDumpCopy" title="复制全部上下文">📋</button>
+                    <button type="button" class="hd-close" id="contextDumpDrawerClose" title="关闭">×</button>
+                </div>
+                <div class="context-dump-drawer-body" id="contextDumpDrawerBody">
                     <div class="hd-empty">加载中…</div>
                 </div>
             </div>
@@ -563,6 +585,157 @@ function createDialog() {
             }
         });
     } catch (_) { /* ignore */ }
+
+    // ===== 页面正文查看抽屉 =====
+    const pageContentToggle = dialog.querySelector('#pageContentToggle');
+    const pageContentDrawer = dialog.querySelector('#pageContentDrawer');
+    const pageContentDrawerBody = dialog.querySelector('#pageContentDrawerBody');
+    const pageContentDrawerClose = dialog.querySelector('#pageContentDrawerClose');
+    const pageContentCopy = dialog.querySelector('#pageContentCopy');
+
+    function closePageContentDrawer() {
+        if (pageContentDrawer) pageContentDrawer.hidden = true;
+    }
+
+    function openPageContentDrawer() {
+        if (!pageContentDrawer || !pageContentDrawerBody) return;
+        // 关闭其他抽屉
+        if (historyDrawer && !historyDrawer.hidden) closeHistoryDrawer();
+        pageContentDrawer.hidden = false;
+        const content = parseWebContent();
+        const charCount = content.length;
+        const pre = document.createElement('pre');
+        pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.5;color:#374151;';
+        pre.textContent = content || '（未提取到正文内容）';
+        pageContentDrawerBody.innerHTML = '';
+        const stats = document.createElement('div');
+        stats.style.cssText = 'font-size:11px;color:#9ca3af;margin-bottom:6px;';
+        stats.textContent = `${charCount.toLocaleString()} 字符`;
+        pageContentDrawerBody.appendChild(stats);
+        pageContentDrawerBody.appendChild(pre);
+    }
+
+    if (pageContentToggle) {
+        pageContentToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (pageContentDrawer.hidden) openPageContentDrawer();
+            else closePageContentDrawer();
+        });
+    }
+    if (pageContentDrawerClose) {
+        pageContentDrawerClose.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closePageContentDrawer();
+        });
+    }
+    if (pageContentCopy) {
+        pageContentCopy.addEventListener('click', async () => {
+            const content = parseWebContent();
+            try {
+                await navigator.clipboard.writeText(content);
+                pageContentCopy.textContent = '✓';
+                setTimeout(() => { pageContentCopy.textContent = '📋'; }, 1200);
+            } catch (e) {
+                showNotification('复制失败：' + e.message);
+            }
+        });
+    }
+
+    // ===== 完整上下文查看抽屉 =====
+    const contextDumpToggle = dialog.querySelector('#contextDumpToggle');
+    const contextDumpDrawer = dialog.querySelector('#contextDumpDrawer');
+    const contextDumpDrawerBody = dialog.querySelector('#contextDumpDrawerBody');
+    const contextDumpDrawerClose = dialog.querySelector('#contextDumpDrawerClose');
+    const contextDumpCopy = dialog.querySelector('#contextDumpCopy');
+
+    function closeContextDumpDrawer() {
+        if (contextDumpDrawer) contextDumpDrawer.hidden = true;
+    }
+
+    async function openContextDumpDrawer() {
+        if (!contextDumpDrawer || !contextDumpDrawerBody) return;
+        // 关闭其他抽屉
+        if (historyDrawer && !historyDrawer.hidden) closeHistoryDrawer();
+        if (pageContentDrawer && !pageContentDrawer.hidden) closePageContentDrawer();
+        contextDumpDrawer.hidden = false;
+        contextDumpDrawerBody.innerHTML = '<div class="hd-empty">加载中…</div>';
+
+        try {
+            const tabResp = await sendMessageWithRetry({ action: 'getCurrentTab' });
+            const currentTabId = tabResp?.tabId;
+            if (!currentTabId) throw new Error('无法获取标签页');
+            const resp = await sendMessageWithRetry({ action: 'getContextDump', tabId: currentTabId });
+            if (!resp || resp.status !== 'ok') {
+                throw new Error(resp?.error || '获取上下文失败');
+            }
+            const { messages, meta } = resp;
+
+            // 元信息头部
+            const metaDiv = document.createElement('div');
+            metaDiv.style.cssText = 'font-size:11px;color:#6b7280;margin-bottom:8px;padding:6px 8px;background:#f3f4f6;border-radius:4px;';
+            metaDiv.innerHTML = `
+                <b>会话模式:</b> ${meta.chatMode} &nbsp;|&nbsp;
+                <b>带教模式:</b> ${meta.mentorFlavor} &nbsp;|&nbsp;
+                <b>历史轮数:</b> ${meta.historyCount} &nbsp;|&nbsp;
+                <b>章节正文:</b> ${meta.preambleCount}
+            `;
+            contextDumpDrawerBody.innerHTML = '';
+            contextDumpDrawerBody.appendChild(metaDiv);
+
+            // 消息列表
+            messages.forEach((msg, idx) => {
+                const item = document.createElement('div');
+                item.className = 'ctx-item';
+                const roleLabel = msg.role === 'system' ? '系统提示词'
+                    : msg.role === 'user' ? '用户'
+                    : '助手';
+                const roleColor = msg.role === 'system' ? '#7c3aed'
+                    : msg.role === 'user' ? '#2563eb'
+                    : '#059669';
+                item.innerHTML = `
+                    <div class="ctx-header">
+                        <span class="ctx-role" style="color:${roleColor}">${roleLabel}</span>
+                        <span class="ctx-len">${(msg.content || '').length} 字符</span>
+                    </div>
+                    <pre class="ctx-content">${escHtml(msg.content || '')}</pre>
+                `;
+                contextDumpDrawerBody.appendChild(item);
+            });
+        } catch (e) {
+            contextDumpDrawerBody.innerHTML = `<div class="hd-empty hd-error">获取失败：${e.message}</div>`;
+        }
+    }
+
+    if (contextDumpToggle) {
+        contextDumpToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (contextDumpDrawer.hidden) openContextDumpDrawer();
+            else closeContextDumpDrawer();
+        });
+    }
+    if (contextDumpDrawerClose) {
+        contextDumpDrawerClose.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeContextDumpDrawer();
+        });
+    }
+    if (contextDumpCopy) {
+        contextDumpCopy.addEventListener('click', async () => {
+            try {
+                const tabResp = await sendMessageWithRetry({ action: 'getCurrentTab' });
+                const currentTabId = tabResp?.tabId;
+                if (!currentTabId) throw new Error('无法获取标签页');
+                const resp = await sendMessageWithRetry({ action: 'getContextDump', tabId: currentTabId });
+                if (!resp || resp.status !== 'ok') throw new Error(resp?.error || '获取失败');
+                const text = resp.messages.map((m) => `[${m.role}]\n${m.content}`).join('\n\n---\n\n');
+                await navigator.clipboard.writeText(text);
+                contextDumpCopy.textContent = '✓';
+                setTimeout(() => { contextDumpCopy.textContent = '📋'; }, 1200);
+            } catch (e) {
+                showNotification('复制失败：' + e.message);
+            }
+        });
+    }
 
     // 宽度预设循环：360 -> 420 -> 560 -> 越宽越窄
     const WIDTH_PRESETS = [360, 420, 560, 760];
@@ -1356,6 +1529,7 @@ async function initializeDialog(dialog) {
                 MentorAPI.MENTOR_FLAVORS.PYTHON,
                 MentorAPI.MENTOR_FLAVORS.FEYNMAN,
                 MentorAPI.MENTOR_FLAVORS.GENERAL,
+                MentorAPI.MENTOR_FLAVORS.BOSS_GREETING,
                 MentorAPI.MENTOR_FLAVORS.CUSTOM_1,
                 MentorAPI.MENTOR_FLAVORS.CUSTOM_2,
                 MentorAPI.MENTOR_FLAVORS.CUSTOM_3
@@ -2342,7 +2516,7 @@ async function initializeDialog(dialog) {
                 chrome.storage.sync.get({ slashCommands: null }, ({ slashCommands }) => {
                     if (Array.isArray(slashCommands) && slashCommands.length > 0) {
                         const normalized = SlashAPI
-                            ? SlashAPI.normalizeSlashCommands(slashCommands)
+                            ? SlashAPI.mergeNewDefaultSlashCommands(slashCommands)
                             : slashCommands;
                         slashTemplates = normalized.length > 0 ? normalized : DEFAULT_SLASH.slice();
                     } else {
@@ -2442,6 +2616,9 @@ async function initializeDialog(dialog) {
             userInput.dispatchEvent(new Event('input'));
             userInput.focus();
             userInput.setSelectionRange(userInput.value.length, userInput.value.length);
+            if (template.autoSubmit === true) {
+                void handleUserInput();
+            }
         }
 
         // 失焦关闭菜单

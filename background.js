@@ -192,6 +192,10 @@ async function handleRuntimeMessage(request, sender) {
         return { status: 'ok' };
     }
 
+    if (action === 'getContextDump') {
+        return await getContextDump(request.tabId);
+    }
+
     if (action === 'saveHistory') {
         return { status: 'ignored' };
     }
@@ -1094,6 +1098,49 @@ function buildMessagesForRequest(session, settings, question, pageContent, turn)
     return {
         promptContent,
         requestMessages: messages
+    };
+}
+
+// 返回当前会话的完整上下文（system + preamble + history + 当前问题），
+// 供前端"查看上下文"按钮展示。
+async function getContextDump(tabId) {
+    const session = getSession(tabId);
+    if (!session) {
+        return { status: 'error', error: '当前无活跃会话' };
+    }
+    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const history = session.history || [];
+    const lastUser = [...history].reverse().find((h) => h.isUser);
+    const lastQuestion = lastUser?.text || '';
+
+    // 如果没有 turn 信息（还没提过问），构造一个最小 turn
+    const lastTurn = session.turns?.[session.turns.length - 1];
+    const chatMode = session.sessionMeta?.currentChatMode
+        || lastTurn?.chatMode
+        || 'web_ephemeral';
+    const mockTurn = {
+        chatMode,
+        usesPageContext: modeUsesPageContext(chatMode),
+    };
+
+    const pageContent = ''; // 正文已存在 preambleChain 里，不需要再传
+    const { requestMessages } = buildMessagesForRequest(
+        session, settings, lastQuestion, pageContent, mockTurn
+    );
+
+    return {
+        status: 'ok',
+        messages: requestMessages.map((m) => ({
+            role: m.role,
+            content: m.content
+        })),
+        meta: {
+            sessionId: session.sessionMeta?.sessionId || '',
+            chatMode,
+            mentorFlavor: session.sessionMeta?.mentorFlavor || 'off',
+            historyCount: history.length,
+            preambleCount: (session.sessionMeta?.preambleChain || []).length
+        }
     };
 }
 

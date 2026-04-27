@@ -1,7 +1,7 @@
 /*
  * "/commands" 快捷指令模板共享定义
  *
- * 结构：{ name, title, prompt }
+ * 结构：{ name, title, prompt, autoSubmit? }
  *   - name：不带斜杠的触发词，输入框只输入 "/xxx"（首字符 /）会做 prefix 匹配
  *   - title：弹层里显示的人类可读名称
  *   - prompt：选中后灌入输入框的提示词文本
@@ -23,8 +23,11 @@
         { name: 'feynman',      title: '🧠 费曼：让我讲给你听',  prompt: '从现在开始请扮演一个对这个话题**完全不懂**的学生，我来把刚才学到的内容讲给你听。请严格遵守：(1) 不要主动展示你知道；(2) 每次只追问 1-2 个我讲得最含糊的词或句子；(3) 用"我听不懂…能换个说法吗？"或"能再举个日常例子吗？"这种方式追问。我准备好了，先问我一句："你想给我讲清楚什么？"' },
         { name: 'deepdive',     title: '🔍 针对上一句深挖',      prompt: '请针对你上一条回答中**最关键**或**最不容易理解**的那一句话，深入讲清楚：包括 (1) 它的精确含义；(2) 为什么这么说；(3) 一个最小的具体例子；(4) 常见的误解。' },
         { name: 'rewrite',      title: '改写更清晰',             prompt: '请改写上述内容，让表达更清晰凝练，保留原意。' },
-        { name: 'counter',      title: '反驳/质疑角度',          prompt: '请从另一个角度反驳/质疑上述内容，列出 3-5 条潜在问题或反例。' }
+        { name: 'counter',      title: '反驳/质疑角度',          prompt: '请从另一个角度反驳/质疑上述内容，列出 3-5 条潜在问题或反例。' },
+        { name: 'greet',        title: 'BOSS 打招呼模板',         prompt: '请基于当前网页的岗位/JD信息，生成打招呼内容。', autoSubmit: true }
     ];
+
+    const AUTO_MERGE_DEFAULT_NAMES = ['greet'];
 
     // 兜底：剔除空 name / 非对象 / 重复 name，保证下游安全
     function normalizeSlashCommands(list) {
@@ -36,18 +39,31 @@
             const name = String(raw.name || '').trim();
             const title = String(raw.title || '').trim();
             const prompt = String(raw.prompt || '');
+            const autoSubmit = raw.autoSubmit === true;
             if (!name || !prompt) continue;
             // 指令名只允许字母数字连字符（和输入框里的匹配正则一致）
             if (!/^[\w-]+$/.test(name)) continue;
             if (seen.has(name)) continue;
             seen.add(name);
-            out.push({ name, title: title || name, prompt });
+            out.push({ name, title: title || name, prompt, ...(autoSubmit ? { autoSubmit } : {}) });
+        }
+        return out;
+    }
+
+    function mergeNewDefaultSlashCommands(list) {
+        const out = normalizeSlashCommands(list);
+        const seen = new Set(out.map((item) => item.name));
+        for (const name of AUTO_MERGE_DEFAULT_NAMES) {
+            if (seen.has(name)) continue;
+            const item = DEFAULT_SLASH_COMMANDS.find((cmd) => cmd.name === name);
+            if (item) out.push({ ...item });
         }
         return out;
     }
 
     global.WebChatSlash = {
         DEFAULT_SLASH_COMMANDS,
-        normalizeSlashCommands
+        normalizeSlashCommands,
+        mergeNewDefaultSlashCommands
     };
 })(typeof self !== 'undefined' ? self : this);

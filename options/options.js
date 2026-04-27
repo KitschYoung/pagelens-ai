@@ -1179,7 +1179,7 @@ function initSlashCommandsEditor() {
     // 初次加载：如果没有存储，使用默认
     chrome.storage.sync.get({ slashCommands: null }, ({ slashCommands }) => {
         if (Array.isArray(slashCommands) && slashCommands.length > 0) {
-            items = SlashAPI.normalizeSlashCommands(slashCommands).map((c) => ({ ...c }));
+            items = SlashAPI.mergeNewDefaultSlashCommands(slashCommands).map((c) => ({ ...c }));
         } else {
             items = SlashAPI.DEFAULT_SLASH_COMMANDS.map((c) => ({ ...c }));
         }
