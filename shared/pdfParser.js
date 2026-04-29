@@ -43,13 +43,51 @@
         return lib;
     }
 
+    function base64ToArrayBuffer(b64) {
+        const binary = atob(b64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i += 1) bytes[i] = binary.charCodeAt(i);
+        return bytes.buffer;
+    }
+
+    async function fetchPdfBytesViaBackground(url) {
+        return new Promise((resolve, reject) => {
+            try {
+                chrome.runtime.sendMessage({ action: 'fetchPdfBytes', url }, (resp) => {
+                    const err = chrome.runtime.lastError;
+                    if (err) { reject(new Error(err.message)); return; }
+                    if (!resp || resp.status !== 'ok') {
+                        reject(new Error((resp && resp.error) || '后台下载 PDF 失败'));
+                        return;
+                    }
+                    try {
+                        resolve(base64ToArrayBuffer(resp.base64));
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
     async function fetchPdfBytes(url) {
-        // 本地 file:// 需要用户在 chrome://extensions 里给扩展打开"允许访问文件网址"
-        const resp = await fetch(url, { credentials: 'include' });
-        if (!resp.ok) {
-            throw new Error(`下载 PDF 失败：HTTP ${resp.status}`);
+        // 1) 优先用 content script 自身的 fetch（http/https 一般直接成功）
+        // 2) 失败再走 background service worker（Chrome 原生 PDF 阅读器、file:// 多数情况只能这条路）
+        //    - 本地 file:// 需要用户在 chrome://extensions 里给扩展打开"允许访问文件网址"
+        try {
+            const resp = await fetch(url, { credentials: 'include' });
+            if (resp.ok) return await resp.arrayBuffer();
+            throw new Error(`HTTP ${resp.status}`);
+        } catch (directErr) {
+            try {
+                return await fetchPdfBytesViaBackground(url);
+            } catch (bgErr) {
+                throw new Error(`下载 PDF 失败：${directErr.message || directErr} / 后台回退：${bgErr.message || bgErr}`);
+            }
         }
-        return await resp.arrayBuffer();
     }
 
     async function extractMarkdown(pdfDoc) {

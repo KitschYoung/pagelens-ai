@@ -214,7 +214,35 @@ async function handleRuntimeMessage(request, sender) {
         return await deleteArchiveEntry(request.sessionId, request.url || '');
     }
 
+    if (action === 'fetchPdfBytes') {
+        return await fetchPdfBytesFromBackground(request.url || '');
+    }
+
     return { status: 'unknown-action' };
+}
+
+// 从扩展（service worker）上下文 fetch PDF 字节，主要用于绕开
+// content script 在 Chrome 原生 PDF 阅读器 / file:// 页面里 fetch 失败的问题。
+// 对 file:// URL，需要用户在 chrome://extensions 给本扩展开启"允许访问文件网址"。
+async function fetchPdfBytesFromBackground(url) {
+    if (!url) return { status: 'error', error: 'empty url' };
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            return { status: 'error', error: `HTTP ${resp.status}` };
+        }
+        const buf = await resp.arrayBuffer();
+        // 用 base64 跨进程传输，避免 ArrayBuffer 在 sendMessage 里被转成空对象
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return { status: 'ok', base64: btoa(binary), byteLength: bytes.length };
+    } catch (error) {
+        return { status: 'error', error: String(error && error.message || error) };
+    }
 }
 
 async function handlePortMessage(port, request) {
