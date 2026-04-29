@@ -7,6 +7,7 @@ PageLens AI 是一个 Chrome Manifest V3 扩展，用侧边面板和悬浮球把
 ## 功能
 
 - 基于当前网页正文、选中文本或纯聊天进行问答
+- 支持 PDF 页面（Chrome 原生阅读器 / `application/pdf` / `.pdf` 链接）通过 pdf.js 抽取正文
 - 流式输出，支持 Markdown 渲染
 - 支持 OpenAI 兼容 API、Anthropic Claude 和 Ollama 本地模型
 - 支持 `Cmd/Ctrl+Shift+K` 打开或关闭侧边面板

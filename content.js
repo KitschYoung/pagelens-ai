@@ -26,6 +26,20 @@ function safeLocalStorageGet(defaults, cb) {
     try { cb && cb(defaults); } catch (e) {}
 }
 
+// PDF 优先：当前 tab 是 PDF 时（Chrome 原生 viewer / Content-Type / .pdf URL），
+// 走 pdf.js 抽文本；其它情况走下面的 HTML 解析。返回 Markdown 字符串。
+async function getPageContextContent() {
+    try {
+        if (self.WebChatPdf && self.WebChatPdf.isPdfPage()) {
+            const md = await self.WebChatPdf.parsePdfContent();
+            if (md) return md;
+        }
+    } catch (e) {
+        console.warn('[PageLens AI] PDF 解析阶段异常，回退到 HTML 解析:', e);
+    }
+    return parseWebContent();
+}
+
 // 抽取页面正文，尽量保留段落 / 标题 / 列表 / 代码块结构。
 // 目标：让 preamble 既对模型可读，也能作为 Markdown 落盘到知识库文件里人眼友好。
 function parseWebContent() {
@@ -597,12 +611,19 @@ function createDialog() {
         if (pageContentDrawer) pageContentDrawer.hidden = true;
     }
 
-    function openPageContentDrawer() {
+    async function openPageContentDrawer() {
         if (!pageContentDrawer || !pageContentDrawerBody) return;
         // 关闭其他抽屉
         if (historyDrawer && !historyDrawer.hidden) closeHistoryDrawer();
         pageContentDrawer.hidden = false;
-        const content = parseWebContent();
+        // PDF 解析较慢，先放占位
+        pageContentDrawerBody.innerHTML = '';
+        const placeholder = document.createElement('div');
+        placeholder.style.cssText = 'font-size:12px;color:#9ca3af;';
+        placeholder.textContent = '正在提取页面正文…';
+        pageContentDrawerBody.appendChild(placeholder);
+
+        const content = await getPageContextContent();
         const charCount = content.length;
         const pre = document.createElement('pre');
         pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.5;color:#374151;';
@@ -630,7 +651,7 @@ function createDialog() {
     }
     if (pageContentCopy) {
         pageContentCopy.addEventListener('click', async () => {
-            const content = parseWebContent();
+            const content = await getPageContextContent();
             try {
                 await navigator.clipboard.writeText(content);
                 pageContentCopy.textContent = '✓';
@@ -1274,8 +1295,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (request.action === 'ping') {
             sendResponse({ status: 'ok' });
         } else if (request.action === 'getPageContent') {
-            const content = parseWebContent();
-            sendResponse({ content });
+            // PDF 解析是异步的：放进 promise，监听器最后已经 return true 保活
+            getPageContextContent()
+                .then((content) => sendResponse({ content }))
+                .catch((e) => sendResponse({ content: '', error: String(e && e.message || e) }));
         } else if (request.action === 'getSelection') {
             const selection = window.getSelection ? window.getSelection().toString().trim() : '';
             sendResponse({ selection });
@@ -1989,7 +2012,7 @@ async function initializeDialog(dialog) {
                 const meta = CHAT_MODE_META[currentChatMode] || {};
                 let pageContent = '';
                 if (meta.contextSource === 'full') {
-                    pageContent = parseWebContent();
+                    pageContent = await getPageContextContent();
                 } else if (meta.contextSource === 'selection') {
                     const sel = (window.getSelection ? window.getSelection().toString().trim() : '') || pendingSelection || '';
                     if (!sel) {
@@ -2453,7 +2476,7 @@ async function initializeDialog(dialog) {
             annotateLoading = true;
             updateAnnotateBtn();
             try {
-                const content = parseWebContent();
+                const content = await getPageContextContent();
                 if (!content || content.trim().length < 50) {
                     throw new Error('当前页面正文太短，无法有效分析');
                 }
