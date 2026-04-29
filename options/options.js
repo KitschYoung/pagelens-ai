@@ -352,6 +352,16 @@ function updateMaxTokensDisplay(value) {
     document.getElementById('maxTokensInput').value = value;
 }
 
+// 各编辑器（带教提示词、显示名、Slash 指令等）的待保存防抖会注册到这里，
+// 点击"保存"/"仅保存"时统一 flush，保证用户刚改完点保存就立刻生效。
+const PENDING_FLUSHERS = new Set();
+async function flushAllPendingEdits() {
+    const fns = Array.from(PENDING_FLUSHERS);
+    await Promise.all(fns.map((fn) => {
+        try { return Promise.resolve(fn()); } catch (e) { return Promise.resolve(); }
+    }));
+}
+
 // 保存而不测试：验证必填项后直接写入存储
 async function saveOptionsWithoutTest() {
     const apiType = document.getElementById('apiType').value;
@@ -363,6 +373,7 @@ async function saveOptionsWithoutTest() {
             apiBase: settings[`${apiType}_apiBase`],
             model: settings[`${apiType}_model`]
         });
+        await flushAllPendingEdits();
         await chrome.storage.sync.set(settings);
         showStatus('✅ 已保存（未测试）。若后续对话报错再回来排查');
     } catch (error) {
@@ -431,7 +442,8 @@ async function saveOptions() {
             model: settings[`${apiType}_model`]
         });
 
-        // 先保存（保证即使测试失败也有持久化，避免白填）
+        // 先 flush 所有编辑器的防抖写入，再保存（保证即使测试失败也有持久化，避免白填）
+        await flushAllPendingEdits();
         await chrome.storage.sync.set(settings);
         showStatus('设置已保存，正在测试...');
 
@@ -863,6 +875,12 @@ function initMentorPromptsEditor() {
         return;
     }
 
+    // 还原默认会再次调用本函数；先移除上一轮注册的 flusher，避免它指向已分离的 DOM
+    if (container.__mentorFlusher) {
+        PENDING_FLUSHERS.delete(container.__mentorFlusher);
+        container.__mentorFlusher = null;
+    }
+
     // 只展示非 OFF 的几种
     const flavors = Object.values(MentorAPI.MENTOR_FLAVORS).filter(
         (f) => f !== MentorAPI.MENTOR_FLAVORS.OFF
@@ -873,6 +891,38 @@ function initMentorPromptsEditor() {
         const labelOverrides = mentorLabels || {};
         const saveTimers = {};
         const labelSaveTimers = {};
+        // flavor -> { textarea, labelInput }，给 flush 用
+        const rowsByFlavor = {};
+
+        // 注册 flush：被点击"保存"/"仅保存"时调用，把所有 pending 的提示词/显示名立刻写入 storage。
+        // 直接从当前 DOM 取值，避免依赖那些尚未触发的 800ms 防抖回调。
+        const flushPendingMentorEdits = async () => {
+            // 取消所有 pending 防抖（避免它们之后再覆盖）
+            Object.keys(saveTimers).forEach((k) => { if (saveTimers[k]) { clearTimeout(saveTimers[k]); saveTimers[k] = null; } });
+            Object.keys(labelSaveTimers).forEach((k) => { if (labelSaveTimers[k]) { clearTimeout(labelSaveTimers[k]); labelSaveTimers[k] = null; } });
+
+            const stored = await new Promise((resolve) => {
+                chrome.storage.sync.get({ mentorPrompts: {}, mentorLabels: {} }, resolve);
+            });
+            const nextPrompts = { ...(stored.mentorPrompts || {}) };
+            const nextLabels = { ...(stored.mentorLabels || {}) };
+
+            Object.keys(rowsByFlavor).forEach((flavor) => {
+                const row = rowsByFlavor[flavor];
+                if (row.textarea) {
+                    const v = (row.textarea.value || '').trim();
+                    if (v) nextPrompts[flavor] = v; else delete nextPrompts[flavor];
+                }
+                if (row.labelInput) {
+                    const v = (row.labelInput.value || '').trim();
+                    if (v) nextLabels[flavor] = v; else delete nextLabels[flavor];
+                }
+            });
+
+            await chrome.storage.sync.set({ mentorPrompts: nextPrompts, mentorLabels: nextLabels });
+        };
+        PENDING_FLUSHERS.add(flushPendingMentorEdits);
+        container.__mentorFlusher = flushPendingMentorEdits;
 
         flavors.forEach((flavor) => {
             const meta = MentorAPI.MENTOR_META[flavor];
@@ -931,6 +981,9 @@ function initMentorPromptsEditor() {
             textarea.value = currentValue;
             textarea.spellcheck = false;
             body.appendChild(textarea);
+
+            // 注册当前行到 flush 表，"保存"按钮会从这里直接读 DOM 写入 storage
+            rowsByFlavor[flavor] = { textarea, labelInput };
 
             const row = document.createElement('div');
             row.className = 'mp-actions';
@@ -1053,6 +1106,14 @@ function initSlashCommandsEditor() {
             chrome.storage.sync.set({ slashCommands: normalized });
         }, 500);
     }
+
+    // 注册 flush：被"保存"/"仅保存"按钮调用，立即把当前 items 写入 storage，
+    // 不再等 500ms 防抖
+    PENDING_FLUSHERS.add(async () => {
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+        const normalized = SlashAPI.normalizeSlashCommands(items);
+        await chrome.storage.sync.set({ slashCommands: normalized });
+    });
 
     function validateItem(item) {
         const errs = [];
