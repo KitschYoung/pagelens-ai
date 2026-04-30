@@ -513,6 +513,106 @@ body .input-container {
     align-items: flex-end;
 }
 
+body .input-container.has-image-input {
+    position: relative;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+
+body .input-container.has-image-input textarea {
+    width: 100%;
+    padding-left: 42px;
+    padding-right: 44px;
+}
+
+body .input-container.has-image-input #askButton {
+    position: absolute;
+    right: 18px;
+    bottom: 16px;
+    width: 28px;
+    height: 28px;
+}
+
+body .image-attachment-button {
+    position: absolute;
+    left: 18px;
+    bottom: 16px;
+    width: 28px;
+    height: 28px;
+    border: 1px solid #e5e7eb;
+    border-radius: 50%;
+    background: #fff;
+    color: #4b5563;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    z-index: 2;
+}
+
+body .image-attachment-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-right: 36px;
+}
+
+body .image-attachment-strip[hidden],
+body .image-attachment-file {
+    display: none;
+}
+
+body .image-attachment-preview {
+    position: relative;
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+    background: #f9fafb;
+}
+
+body .image-attachment-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+body .image-attachment-remove {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 18px;
+    height: 18px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(17, 24, 39, 0.78);
+    color: #fff;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 18px;
+    padding: 0;
+}
+
+body .message-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+body .message-attachments img {
+    display: block;
+    max-width: 160px;
+    max-height: 160px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    object-fit: cover;
+}
+
 body textarea {
     flex: 1;
     min-height: 36px;

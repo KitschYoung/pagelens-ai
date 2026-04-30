@@ -26,8 +26,8 @@ function safeLocalStorageGet(defaults, cb) {
     try { cb && cb(defaults); } catch (e) {}
 }
 
-// PDF 优先：当前 tab 是 PDF 时（Chrome 原生 viewer / Content-Type / .pdf URL），
-// 走 pdf.js 抽文本；其它情况走下面的 HTML 解析。返回 Markdown 字符串。
+// PDF 优先：当前 tab 是 PDF 时走 pdf.js 抽文本；其它情况走 HTML 解析。
+// 视频模式使用 getVideoPageContextContent() 单独组合字幕和网页文本。
 async function getPageContextContent() {
     try {
         if (self.WebChatPdf && self.WebChatPdf.isPdfPage()) {
@@ -38,6 +38,32 @@ async function getPageContextContent() {
         console.warn('[PageLens AI] PDF 解析阶段异常，回退到 HTML 解析:', e);
     }
     return parseWebContent();
+}
+
+async function getVideoPageContextContent() {
+    let videoText = '';
+
+    try {
+        if (self.WebChatVideo && self.WebChatVideo.isSupportedVideoPage()) {
+            const videoContext = await self.WebChatVideo.extractVideoContext();
+            videoText = videoContext?.markdown || '';
+        }
+    } catch (e) {
+        console.warn('[PageLens AI] 视频字幕提取阶段异常:', e);
+        videoText = `# 视频字幕内容\n\n- 提取说明: 视频字幕提取失败：${e.message || String(e)}`;
+    }
+
+    return [
+        '# 视频学习上下文',
+        '',
+        '## 视频字幕',
+        '',
+        videoText || '（当前不是支持的视频页面，或未提取到视频字幕。）',
+        '',
+        '## 网页文本内容',
+        '',
+        '（视频模式未注入整页文本，避免把播放器菜单、推荐列表、其它扩展 UI 当作视频内容。）'
+    ].join('\n');
 }
 
 // 抽取页面正文，尽量保留段落 / 标题 / 列表 / 代码块结构。
@@ -177,7 +203,8 @@ function createDialog() {
                         <div class="chat-mode-group" id="chatModeGroup" role="radiogroup" aria-label="会话模式">
                             <button type="button" class="chat-mode-btn" data-mode="web_persisted" aria-pressed="false" title="基于整页内容回答，写入知识库">网页+入库</button>
                             <button type="button" class="chat-mode-btn" data-mode="web_ephemeral" aria-pressed="false" title="基于整页内容回答，不入库">网页+临时</button>
-                            <button type="button" class="chat-mode-btn" data-mode="web_selection" aria-pressed="false" title="只用页面选中文本作为上下文">选中+临时</button>
+                            <button type="button" class="chat-mode-btn" data-mode="video_persisted" aria-pressed="false" title="基于视频字幕和网页文本回答，写入知识库">视频+入库</button>
+                            <button type="button" class="chat-mode-btn" data-mode="video_ephemeral" aria-pressed="false" title="基于视频字幕和网页文本回答，不入库">视频+临时</button>
                             <button type="button" class="chat-mode-btn" data-mode="chat_persisted" aria-pressed="false" title="纯聊天，写入知识库">纯聊+入库</button>
                             <button type="button" class="chat-mode-btn" data-mode="chat_ephemeral" aria-pressed="false" title="纯聊天，不入库">纯聊+临时</button>
                         </div>
@@ -208,8 +235,9 @@ function createDialog() {
             </div>
             <div class="history-drawer" id="historyDrawer" hidden>
                 <div class="history-drawer-head">
+                    <button type="button" class="hd-back" title="返回对话">← 返回</button>
                     <span class="hd-title">📚 本页历史对话</span>
-                    <button type="button" class="hd-close" id="historyDrawerClose" title="关闭">×</button>
+                    <button type="button" class="hd-close" id="historyDrawerClose" title="返回对话">×</button>
                 </div>
                 <div class="history-drawer-body" id="historyDrawerBody">
                     <div class="hd-empty">加载中…</div>
@@ -217,9 +245,10 @@ function createDialog() {
             </div>
             <div class="page-content-drawer" id="pageContentDrawer" hidden>
                 <div class="history-drawer-head">
+                    <button type="button" class="hd-back" title="返回对话">← 返回</button>
                     <span class="hd-title">📄 提取到的网页正文</span>
                     <button type="button" class="hd-copy" id="pageContentCopy" title="复制全部内容">📋</button>
-                    <button type="button" class="hd-close" id="pageContentDrawerClose" title="关闭">×</button>
+                    <button type="button" class="hd-close" id="pageContentDrawerClose" title="返回对话">×</button>
                 </div>
                 <div class="page-content-drawer-body" id="pageContentDrawerBody">
                     <div class="hd-empty">加载中…</div>
@@ -227,9 +256,10 @@ function createDialog() {
             </div>
             <div class="context-dump-drawer" id="contextDumpDrawer" hidden>
                 <div class="history-drawer-head">
+                    <button type="button" class="hd-back" title="返回对话">← 返回</button>
                     <span class="hd-title">🔍 完整上下文</span>
                     <button type="button" class="hd-copy" id="contextDumpCopy" title="复制全部上下文">📋</button>
-                    <button type="button" class="hd-close" id="contextDumpDrawerClose" title="关闭">×</button>
+                    <button type="button" class="hd-close" id="contextDumpDrawerClose" title="返回对话">×</button>
                 </div>
                 <div class="context-dump-drawer-body" id="contextDumpDrawerBody">
                     <div class="hd-empty">加载中…</div>
@@ -322,6 +352,31 @@ function createDialog() {
     });
     showObserver.observe(dialog, { attributes: true, attributeFilter: ['class'] });
 
+    function closeSecondaryView() {
+        const drawers = [
+            dialog.querySelector('#historyDrawer'),
+            dialog.querySelector('#pageContentDrawer'),
+            dialog.querySelector('#contextDumpDrawer')
+        ];
+        const hasOpenDrawer = drawers.some((drawer) => drawer && !drawer.hidden);
+        if (!hasOpenDrawer) return false;
+
+        drawers.forEach((drawer) => {
+            if (drawer) drawer.hidden = true;
+        });
+
+        const historyToggle = dialog.querySelector('#historyToggle');
+        if (historyToggle) historyToggle.setAttribute('aria-pressed', 'false');
+        return true;
+    }
+    dialog.__closeSecondaryView = closeSecondaryView;
+    dialog.querySelectorAll('.hd-back').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeSecondaryView();
+        });
+    });
+
     // 头部按钮：切换停靠方向 + 关闭
     const sideSwitchBtn = dialog.querySelector('.panel-side-switch');
     if (sideSwitchBtn) {
@@ -336,6 +391,7 @@ function createDialog() {
     if (closeBtn) {
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (closeSecondaryView()) return;
             dialog.classList.remove('show');
         });
     }
@@ -1299,6 +1355,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             getPageContextContent()
                 .then((content) => sendResponse({ content }))
                 .catch((e) => sendResponse({ content: '', error: String(e && e.message || e) }));
+        } else if (request.action === 'getVideoPageContent') {
+            getVideoPageContextContent()
+                .then((content) => sendResponse({ content }))
+                .catch((e) => sendResponse({ content: '', error: String(e && e.message || e) }));
         } else if (request.action === 'getSelection') {
             const selection = window.getSelection ? window.getSelection().toString().trim() : '';
             sendResponse({ selection });
@@ -1358,6 +1418,11 @@ async function initializeDialog(dialog) {
         const chatModeGroup = dialog.querySelector('#chatModeGroup');
         const chatModeButtons = chatModeGroup ? Array.from(chatModeGroup.querySelectorAll('.chat-mode-btn')) : [];
         const chatModeHint = dialog.querySelector('#chatModeHint');
+        const imageInput = self.WebChatImageInput?.createImageInputController({
+            container: dialog.querySelector('.input-container'),
+            input: userInput,
+            onError: (message) => showNotification(message)
+        });
         let isGenerating = false;
         let currentPort = null;
         let currentAnswer = '';
@@ -1525,9 +1590,11 @@ async function initializeDialog(dialog) {
         function refreshMentorOverrides(cb) {
             try {
                 chrome.storage.sync.get({ mentorPrompts: {}, mentorLabels: {} }, ({ mentorPrompts, mentorLabels }) => {
-                    mentorOverrides.prompts = mentorPrompts || {};
-                    mentorOverrides.labels = mentorLabels || {};
-                    if (cb) cb();
+                    chrome.storage.local.get({ mentorPrompts: null }, ({ mentorPrompts: localPrompts }) => {
+                        mentorOverrides.prompts = (localPrompts && typeof localPrompts === 'object') ? localPrompts : (mentorPrompts || {});
+                        mentorOverrides.labels = mentorLabels || {};
+                        if (cb) cb();
+                    });
                 });
             } catch (e) { /* context invalidated */ }
         }
@@ -1597,7 +1664,7 @@ async function initializeDialog(dialog) {
         refreshMentorOverrides(() => buildMentorPopover());
         try {
             chrome.storage.onChanged.addListener((changes, area) => {
-                if (area !== 'sync') return;
+                if (area !== 'sync' && area !== 'local') return;
                 if (changes.mentorPrompts || changes.mentorLabels) {
                     refreshMentorOverrides(() => buildMentorPopover());
                 }
@@ -1724,6 +1791,7 @@ async function initializeDialog(dialog) {
                         try {
                             // 对所有消息使用Markdown渲染
                             messageDiv.innerHTML = markedInstance(msg.markdownContent || msg.content);
+                            self.WebChatImageInput?.renderMessageAttachments(messageDiv, msg.attachments);
                             // 添加右键菜单事件监听
                             messageDiv.addEventListener('contextmenu', (e) => {
                                 const markdownContent = messageDiv.dataset.markdownContent;
@@ -1732,6 +1800,7 @@ async function initializeDialog(dialog) {
                         } catch (error) {
                             console.error('Markdown渲染失败:', error);
                             messageDiv.textContent = msg.content;
+                            self.WebChatImageInput?.renderMessageAttachments(messageDiv, msg.attachments);
                         }
 
                         messagesContainer.appendChild(messageDiv);
@@ -1949,7 +2018,7 @@ async function initializeDialog(dialog) {
         }
 
         // 修改addMessage函数
-        function addMessage(content, isUser = false) {
+        function addMessage(content, isUser = false, attachments = []) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
 
@@ -1970,6 +2039,7 @@ async function initializeDialog(dialog) {
                     console.error('Markdown渲染失败:', error);
                     messageDiv.textContent = content;
                 }
+                self.WebChatImageInput?.renderMessageAttachments(messageDiv, attachments);
             }
 
             messagesContainer.appendChild(messageDiv);
@@ -1999,8 +2069,9 @@ async function initializeDialog(dialog) {
                 return;
             }
 
-            const question = userInput.value.trim();
-            if (!question) return;
+            const attachments = imageInput?.getAttachments() || [];
+            const question = userInput.value.trim() || (attachments.length ? '请分析这张图片。' : '');
+            if (!question && attachments.length === 0) return;
 
             isGenerating = true;
             userInput.disabled = true;
@@ -2013,18 +2084,8 @@ async function initializeDialog(dialog) {
                 let pageContent = '';
                 if (meta.contextSource === 'full') {
                     pageContent = await getPageContextContent();
-                } else if (meta.contextSource === 'selection') {
-                    const sel = (window.getSelection ? window.getSelection().toString().trim() : '') || pendingSelection || '';
-                    if (!sel) {
-                        isGenerating = false;
-                        userInput.disabled = false;
-                        askButton.disabled = false;
-                        askButton.classList.remove('generating');
-                        userInput.value = question; // 恢复输入
-                        addMessage('当前是"选中+临时"模式，请先在页面上选中一段文字再提问。', false);
-                        return;
-                    }
-                    pageContent = sel;
+                } else if (meta.contextSource === 'video') {
+                    pageContent = await getVideoPageContextContent();
                 }
 
                 const prepare = await sendMessageWithRetry({
@@ -2044,7 +2105,8 @@ async function initializeDialog(dialog) {
                     resetMessagesUI();
                 }
 
-                addMessage(question, true);
+                imageInput?.clear();
+                addMessage(question, true, attachments);
                 const messageDiv = addMessage('', false);
                 const typingIndicator = addTypingIndicator();
 
@@ -2144,6 +2206,7 @@ async function initializeDialog(dialog) {
                         tabId: tabId,
                         pageContent: pageContent,
                         question: question,
+                        attachments: attachments,
                         requestId: prepare.requestId,
                         clientId: clientId,
                         sessionReset: prepare.sessionReset,
@@ -2191,7 +2254,7 @@ async function initializeDialog(dialog) {
                 return;
             }
             if (e.key === 'Escape') {
-                // 生成中 -> 停止生成；否则关闭面板
+                // 生成中 -> 停止生成；二级页打开时先返回对话；否则关闭面板
                 e.preventDefault();
                 if (isGenerating) {
                     void sendMessageWithRetry({
@@ -2199,6 +2262,8 @@ async function initializeDialog(dialog) {
                         tabId,
                         reason: 'user-esc'
                     });
+                } else if (typeof dialog.__closeSecondaryView === 'function' && dialog.__closeSecondaryView()) {
+                    return;
                 } else {
                     dialog.classList.remove('show');
                 }

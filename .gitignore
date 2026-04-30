@@ -173,6 +173,7 @@ pagelens-session-logs/
 pagelens-workspace/
 webchat-session-logs/
 webchat-workspace/
+sample*.md
 
 # Local scratch / experiments (contain personal keys or WIP code)
 temp.py

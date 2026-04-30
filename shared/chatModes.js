@@ -7,7 +7,8 @@
     const CHAT_MODES = {
         WEB_PERSISTED: 'web_persisted',
         WEB_EPHEMERAL: 'web_ephemeral',
-        WEB_SELECTION: 'web_selection',
+        VIDEO_PERSISTED: 'video_persisted',
+        VIDEO_EPHEMERAL: 'video_ephemeral',
         CHAT_PERSISTED: 'chat_persisted',
         CHAT_EPHEMERAL: 'chat_ephemeral'
     };
@@ -31,13 +32,21 @@
             shouldPersist: false,
             contextSource: 'full'
         },
-        web_selection: {
-            label: '选中 + 临时',
-            hint: '只把页面选中的文字作为上下文，临时不入库。',
+        video_persisted: {
+            label: '视频 + 入库',
+            hint: '基于视频字幕和网页文本回答，且会写入知识库。',
+            hintClass: 'persisted',
+            usesPageContext: true,
+            shouldPersist: true,
+            contextSource: 'video'
+        },
+        video_ephemeral: {
+            label: '视频 + 临时',
+            hint: '基于视频字幕和网页文本回答，但不会写入知识库。',
             hintClass: 'ephemeral',
             usesPageContext: true,
             shouldPersist: false,
-            contextSource: 'selection'
+            contextSource: 'video'
         },
         chat_persisted: {
             label: '纯聊 + 入库',

@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "PageLens AI - 网页内容增强问答助手",
-    "version": "1.1",
+    "version": "6.0.0",
     "description": "基于当前网页内容的AI增强问答系统",
     "icons": {
         "16": "icons/icon16.png",
@@ -13,7 +13,8 @@
         "activeTab",
         "scripting",
         "storage",
-        "tabs"
+        "tabs",
+        "unlimitedStorage"
     ],
     "host_permissions": [
         "<all_urls>"
@@ -51,6 +52,8 @@
                 "shared/mentorModes.js",
                 "shared/slashCommands.js",
                 "shared/pdfParser.js",
+                "shared/videoContext.js",
+                "shared/imageInput.js",
                 "content.js"
             ],
             "css": [

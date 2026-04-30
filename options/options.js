@@ -1,32 +1,60 @@
 // API类型的默认配置
 const API_CONFIGS = {
-    custom: {
-        apiBase: '',
+    openai_chat: {
+        apiBase: 'https://api.openai.com/v1',
+        apiPath: '/chat/completions',
         modelPlaceholder: '例如：gpt-4.1-mini',
         requiresKey: true,
-        apiBasePlaceholder: '例如：https://your-openai-compatible-endpoint/v1/chat/completions',
+        apiBasePlaceholder: '例如：https://api.openai.com/v1',
+        apiPathPlaceholder: '/chat/completions',
         apiKeyPlaceholder: '请输入API密钥',
-        modelHelp: '填写你所使用的模型标识，例如：gpt-4.1-mini'
+        modelHelp: '填写或获取 OpenAI Chat Completions 兼容模型标识'
+    },
+    responses: {
+        apiBase: 'https://api.openai.com/v1',
+        apiPath: '/responses',
+        modelPlaceholder: '例如：gpt-4.1-mini',
+        requiresKey: true,
+        apiBasePlaceholder: '例如：https://api.openai.com/v1',
+        apiPathPlaceholder: '/responses',
+        apiKeyPlaceholder: '请输入API密钥',
+        modelHelp: '填写或获取 OpenAI Responses API 兼容模型标识'
+    },
+    claude: {
+        apiBase: 'https://api.anthropic.com/v1',
+        apiPath: '/messages',
+        modelPlaceholder: 'claude-sonnet-4-5',
+        requiresKey: true,
+        apiBasePlaceholder: 'https://api.anthropic.com/v1',
+        apiPathPlaceholder: '/messages',
+        apiKeyPlaceholder: '请输入 Anthropic API Key (sk-ant-...)',
+        modelHelp: '示例：claude-sonnet-4-5 / claude-opus-4-1 / claude-haiku-4-5。会自动在 page 内容上打 cache_control 命中 Anthropic prompt caching。'
+    },
+    gemini: {
+        apiBase: 'https://generativelanguage.googleapis.com/v1beta',
+        apiPath: '/models/{model}:generateContent',
+        modelPlaceholder: '例如：gemini-2.0-flash',
+        requiresKey: true,
+        apiBasePlaceholder: 'https://generativelanguage.googleapis.com/v1beta',
+        apiPathPlaceholder: '/models/{model}:generateContent',
+        apiKeyPlaceholder: '请输入 Gemini API Key',
+        modelHelp: '获取模型时会读取 /models；测试与对话会把 API Key 写入 URL 查询参数 key'
     },
     ollama: {
         apiBase: 'http://127.0.0.1:11434/api/chat',
+        apiPath: '',
         modelPlaceholder: 'qwen2.5',
         requiresKey: false,
         apiBasePlaceholder: 'http://127.0.0.1:11434/api/chat',
+        apiPathPlaceholder: '',
         apiKeyPlaceholder: '本地模型无需API密钥',
         modelHelp: '常用模型：qwen2.5, llama2, mistral, gemma, codellama等。使用前请确保已安装模型：ollama pull qwen2.5'
-    },
-    anthropic: {
-        apiBase: 'https://api.anthropic.com/v1/messages',
-        modelPlaceholder: 'claude-sonnet-4-5',
-        requiresKey: true,
-        apiBasePlaceholder: 'https://api.anthropic.com/v1/messages',
-        apiKeyPlaceholder: '请输入 Anthropic API Key (sk-ant-...)',
-        modelHelp: '示例：claude-sonnet-4-5 / claude-opus-4-1 / claude-haiku-4-5。会自动在 page 内容上打 cache_control 命中 Anthropic prompt caching（90% off）。'
     }
 };
 
 const FLOATING_ICON_MAX_BYTES = 5 * 1024 * 1024;
+const MAX_TOKENS_MIN = 128;
+const MAX_TOKENS_MAX = 32768;
 const DEFAULT_FLOATING_ICON_SVG = `
     <svg class="icon" width="24" height="24" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
         <path d="M200 935.744a39.517867 39.517867 0 0 1-14.122667-7.185067c-12.906667-10.295467-18.602667-27.2896-14.741333-43.4688a1295.863467 1295.863467 0 0 0 17.207467-520c-5.6448-33.216 0.418133-66.760533 17.5488-96.443733 17.156267-29.563733 43.498667-51.648 75.656533-60.497067h0.008533l417.591467-114.24c66.0352-19.434667 144.533333 49.792 162.602667 156.258134a1978.666667 1978.666667 0 0 1 27.144533 397.806933c-3.4432 107.592533-71.6928 186.248533-139.758933 176.008533l-64.823467-8.494933c-22.203733-3.042133-36.8768-29.952-33.8944-60.1984 3.008-30.2336 22.664533-53.713067 45.038933-52.343467 21.7472 1.463467 43.485867 2.922667 65.233067 4.3776 24.170667 1.783467 45.969067-26.0096 47.133867-62.007466a1897.941333 1897.941333 0 0 0-26.030934-381.499734c-6.062933-35.618133-31.466667-60.3136-55.168-55.2576l-424.0128 87.466667c-11.4176 2.363733-21.1584 9.570133-27.6096 20.078933-6.4512 10.530133-8.802133 22.993067-6.698666 35.345067a1377.0368 1377.0368 0 0 1 2.346666 449.117867 1341.696 1341.696 0 0 0 118.4512-104.448c8.251733-8.1792 18.862933-12.475733 29.602134-11.758934l293.009066 19.6736c22.340267 1.365333 38.839467 28.650667 35.639467 60.842667-3.1744 32.200533-24.704 55.765333-46.882133 52.7232l-274.5216-35.972267c-62.229333 57.1136-127.6544 106.965333-194.973867 149.384534-9.629867 6.071467-20.8 7.522133-30.976 4.731733z" fill="white"></path>
@@ -34,6 +62,64 @@ const DEFAULT_FLOATING_ICON_SVG = `
         <path d="M460.864 507.733333m-50.133333 0a50.133333 50.133333 0 1 0 100.266666 0 50.133333 50.133333 0 1 0-100.266666 0Z" fill="white"></path>
     </svg>
 `;
+
+function storageGet(area, defaults) {
+    return new Promise((resolve, reject) => {
+        chrome.storage[area].get(defaults, (items) => {
+            const error = chrome.runtime.lastError;
+            if (error) {
+                reject(new Error(error.message));
+                return;
+            }
+            resolve(items);
+        });
+    });
+}
+
+function storageSet(area, values) {
+    return new Promise((resolve, reject) => {
+        chrome.storage[area].set(values, () => {
+            const error = chrome.runtime.lastError;
+            if (error) {
+                reject(new Error(error.message));
+                return;
+            }
+            resolve();
+        });
+    });
+}
+
+function normalizeApiType(apiType) {
+    if (apiType === 'custom') return 'openai_chat';
+    if (apiType === 'anthropic') return 'claude';
+    return API_CONFIGS[apiType] ? apiType : 'openai_chat';
+}
+
+function runtimeRequest(message) {
+    return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(message, (response) => {
+            const error = chrome.runtime.lastError;
+            if (error) {
+                reject(new Error(error.message));
+                return;
+            }
+            resolve(response);
+        });
+    });
+}
+
+async function loadMentorEditorData() {
+    const [syncData, localData] = await Promise.all([
+        storageGet('sync', { mentorPrompts: {}, mentorLabels: {} }),
+        storageGet('local', { mentorPrompts: null })
+    ]);
+    return {
+        mentorPrompts: (localData.mentorPrompts && typeof localData.mentorPrompts === 'object')
+            ? localData.mentorPrompts
+            : (syncData.mentorPrompts || {}),
+        mentorLabels: syncData.mentorLabels || {}
+    };
+}
 
 // 校验字符串是否全为可用作 HTTP header 的 ASCII（排除控制字符）
 function assertHeaderSafe(value, fieldName) {
@@ -51,113 +137,19 @@ function assertHeaderSafe(value, fieldName) {
 // 测试API配置
 async function testApiConfig(settings) {
     try {
-        // 预检：apiKey / apiBase / model 不能有非 ASCII 字符（HTTP header/URL 要求）
         assertHeaderSafe(settings.apiKey, 'API 密钥');
         assertHeaderSafe(settings.apiBase, '请求 URL');
+        assertHeaderSafe(settings.apiPath, 'API 路径');
         assertHeaderSafe(settings.model, '模型名');
 
-        // 设置基础headers
-        let headers = {
-            'Content-Type': 'application/json'
-        };
-
-        // 按 API 类型配置认证头
-        if (settings.apiType === 'custom') {
-            if (!settings.apiKey) {
-                throw new Error('API密钥是必填项');
-            }
-            headers['Authorization'] = `Bearer ${settings.apiKey}`;
-        } else if (settings.apiType === 'anthropic') {
-            if (!settings.apiKey) {
-                throw new Error('Anthropic API Key 是必填项');
-            }
-            headers['x-api-key'] = settings.apiKey;
-            headers['anthropic-version'] = '2023-06-01';
-            headers['anthropic-dangerous-direct-browser-access'] = 'true';
-        }
-
-        let requestBody;
-        if (settings.apiType === 'ollama') {
-            requestBody = {
-                model: settings.model,
-                messages: [
-                    { role: "system", content: "你是一个帮助理解网页内容的AI助手。" },
-                    { role: "user", content: "这是一条测试消息，请回复：API配置测试成功" }
-                ],
-                stream: false,
-                options: { temperature: settings.temperature || 0.7, num_predict: 50 }
-            };
-        } else if (settings.apiType === 'anthropic') {
-            requestBody = {
-                model: settings.model,
-                max_tokens: 50,
-                temperature: 0.7,
-                stream: false,
-                system: '你是一个帮助理解网页内容的AI助手。',
-                messages: [
-                    { role: 'user', content: '这是一条测试消息，请回复：API配置测试成功' }
-                ]
-            };
-        } else {
-            requestBody = {
-                model: settings.model,
-                messages: [
-                    { role: "system", content: "你是一个帮助理解网页内容的AI助手。" },
-                    { role: "user", content: "这是一条测试消息，请回复：API配置测试成功" }
-                ],
-                max_tokens: 50,
-                temperature: 0.7,
-                stream: false
-            };
-        }
-
-        const response = await fetch(settings.apiBase, {
-            method: 'POST',
-            headers: headers,
-            body: JSON.stringify(requestBody)
+        const response = await runtimeRequest({
+            action: 'testApiConfig',
+            config: settings
         });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            try {
-                const errorJson = JSON.parse(errorText);
-                throw new Error(errorJson.error?.message || '请求失败');
-            } catch (e) {
-                if (settings.apiType === 'ollama') {
-                    throw new Error(
-                        `无法连接到Ollama服务。请检查：\n` +
-                        `1. Ollama是否已正确安装\n` +
-                        `2. 服务是否已启动：\n` +
-                        `   OLLAMA_ORIGINS=* ollama serve\n` +
-                        `3. 服务地址是否正确(默认：http://127.0.0.1:11434)\n` +
-                        `4. 是否允许跨域请求(OLLAMA_ORIGINS=*)\n` +
-                        `5. 是否已安装所需的模型：ollama pull ${settings.model}\n` +
-                        `6. 如果问题持续，可以尝试重启Ollama服务`
-                    );
-                }
-                throw new Error(`请求失败: ${errorText}`);
-            }
+        if (!response || response.status !== 'ok') {
+            throw new Error(response?.error || 'API测试失败');
         }
-
-        const data = await response.json();
-
-        // 根据不同的API类型验证响应
-        if (settings.apiType === 'ollama') {
-            if (data.error) throw new Error(data.error);
-            if (!data.message || !data.message.content) {
-                throw new Error('无效的API响应格式');
-            }
-        } else if (settings.apiType === 'anthropic') {
-            if (!data.content || !Array.isArray(data.content) || data.content.length === 0) {
-                throw new Error('无效的 Anthropic 响应格式');
-            }
-        } else {
-            if (!data.choices || !data.choices[0].message) {
-                throw new Error('无效的API响应格式');
-            }
-        }
-
-        return true;
+        return response;
     } catch (error) {
         if (error.message.includes('Failed to fetch') && settings.apiType === 'ollama') {
             throw new Error(
@@ -171,7 +163,7 @@ async function testApiConfig(settings) {
                 `6. 如果问题持续，可以尝试重启Ollama服务`
             );
         }
-        throw new Error(`API测试失败: ${error.message}`);
+        throw new Error(error.message.startsWith('API测试失败') ? error.message : `API测试失败: ${error.message}`);
     }
 }
 
@@ -219,37 +211,56 @@ async function testSessionLogConfig(settings) {
 
 // 更新界面显示
 function updateApiTypeUI(apiType) {
+    apiType = normalizeApiType(apiType);
     const config = API_CONFIGS[apiType];
     const apiKeyGroup = document.querySelector('.api-key-group');
     const apiBaseInput = document.getElementById('apiBase');
+    const apiPathInput = document.getElementById('apiPath');
     const modelInput = document.getElementById('model');
     const apiKeyInput = document.getElementById('apiKey');
+    const modelList = document.getElementById('modelList');
 
     // 从存储中加载当前API类型的配置
     chrome.storage.sync.get({
         [`${apiType}_apiKey`]: '',
-        [`${apiType}_apiBase`]: apiType === 'custom' ? DEFAULT_SETTINGS.custom_apiBase : config.apiBase,
-        [`${apiType}_model`]: apiType === 'custom' ? DEFAULT_SETTINGS.custom_model : config.modelPlaceholder,
+        [`${apiType}_apiBase`]: config.apiBase,
+        [`${apiType}_apiPath`]: config.apiPath,
+        [`${apiType}_model`]: config.modelPlaceholder,
+        custom_apiKey: '',
+        custom_apiBase: '',
+        custom_model: '',
+        anthropic_apiKey: '',
+        anthropic_apiBase: '',
+        anthropic_model: ''
     }, (items) => {
+        const legacyPrefix = apiType === 'openai_chat' ? 'custom' : (apiType === 'claude' ? 'anthropic' : '');
         // 更新API密钥输入框
         apiKeyGroup.style.display = config.requiresKey ? 'block' : 'none';
         apiKeyInput.placeholder = config.apiKeyPlaceholder;
-        apiKeyInput.value = items[`${apiType}_apiKey`];
+        apiKeyInput.value = items[`${apiType}_apiKey`] || (legacyPrefix ? items[`${legacyPrefix}_apiKey`] : '');
 
         // 更新API请求URL输入框
-        apiBaseInput.value = items[`${apiType}_apiBase`];
+        apiBaseInput.value = items[`${apiType}_apiBase`] || (legacyPrefix ? items[`${legacyPrefix}_apiBase`] : '') || config.apiBase;
         apiBaseInput.placeholder = config.apiBasePlaceholder;
-        const baseHelp = apiType === 'ollama'
+        document.getElementById('apiBaseHelp').textContent = apiType === 'ollama'
             ? '本地 API 接口地址'
-            : apiType === 'anthropic'
-                ? 'Anthropic v1/messages 端点（官方：https://api.anthropic.com/v1/messages）；浏览器直连会带 anthropic-dangerous-direct-browser-access 头'
-                : 'API 接口地址';
-        document.getElementById('apiBaseHelp').textContent = baseHelp;
+            : '可填 API 主机，也可粘贴完整端点；保存和测试时会自动归一化';
+
+        apiPathInput.value = items[`${apiType}_apiPath`] || config.apiPath || '';
+        apiPathInput.placeholder = config.apiPathPlaceholder || '';
+        apiPathInput.disabled = apiType === 'ollama';
+        document.getElementById('apiPathHelp').textContent = apiType === 'ollama'
+            ? 'Ollama 使用上方完整接口地址'
+            : '留空使用当前协议默认路径；Gemini 路径里的 {model} 会自动替换';
 
         // 更新模型输入框
-        modelInput.value = items[`${apiType}_model`];
+        modelInput.value = items[`${apiType}_model`] || (legacyPrefix ? items[`${legacyPrefix}_model`] : '');
         modelInput.placeholder = config.modelPlaceholder;
         document.getElementById('modelHelp').textContent = config.modelHelp;
+        if (modelList) {
+            modelList.innerHTML = '';
+            modelList.style.display = 'none';
+        }
     });
 }
 
@@ -271,6 +282,38 @@ function showStatus(message, type = 'success') {
     }
 }
 
+function renderModelList(models) {
+    const modelList = document.getElementById('modelList');
+    const modelInput = document.getElementById('model');
+    if (!modelList || !modelInput) return;
+
+    modelList.innerHTML = '';
+    if (!Array.isArray(models) || models.length === 0) {
+        modelList.style.display = 'none';
+        return;
+    }
+
+    models.forEach((modelId, index) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'model-item';
+        item.textContent = modelId;
+        item.addEventListener('click', () => {
+            modelInput.value = modelId;
+            modelList.querySelectorAll('.model-item').forEach((node) => node.classList.remove('active'));
+            item.classList.add('active');
+            modelList.style.display = 'none';
+        });
+        modelList.appendChild(item);
+        if (index === 0) {
+            item.classList.add('active');
+        }
+    });
+
+    modelInput.value = models[0];
+    modelList.style.display = 'block';
+}
+
 function setFloatingIconPreview(dataUrl) {
     const preview = document.getElementById('floatingIconPreview');
     if (!preview) return;
@@ -290,7 +333,7 @@ function fileToDataUrl(file) {
 
 // 验证设置
 function validateSettings(settings) {
-    const config = API_CONFIGS[settings.apiType];
+    const config = API_CONFIGS[normalizeApiType(settings.apiType)];
 
     if (!settings.apiBase.trim()) {
         throw new Error('请求URL是必填项');
@@ -364,13 +407,14 @@ async function flushAllPendingEdits() {
 
 // 保存而不测试：验证必填项后直接写入存储
 async function saveOptionsWithoutTest() {
-    const apiType = document.getElementById('apiType').value;
+    const apiType = normalizeApiType(document.getElementById('apiType').value);
     const settings = buildSettingsFromForm(apiType);
     try {
         validateSettings({
             apiType,
             apiKey: settings[`${apiType}_apiKey`],
             apiBase: settings[`${apiType}_apiBase`],
+            apiPath: settings[`${apiType}_apiPath`],
             model: settings[`${apiType}_model`]
         });
         await flushAllPendingEdits();
@@ -383,6 +427,7 @@ async function saveOptionsWithoutTest() {
 
 // 把表单字段打包成 settings 对象（saveOptions 与 saveOptionsWithoutTest 共用）
 function buildSettingsFromForm(apiType) {
+    apiType = normalizeApiType(apiType);
     const settings = {
         apiType,
         maxTokens: parseInt(document.getElementById('maxTokensInput').value),
@@ -393,14 +438,14 @@ function buildSettingsFromForm(apiType) {
         sessionLogWorkspaceRoot: document.getElementById('sessionLogWorkspaceRoot').value.trim() || DEFAULT_SETTINGS.sessionLogWorkspaceRoot,
         sessionIdleMinutes: parseInt(document.getElementById('sessionIdleMinutes').value, 10) || DEFAULT_SETTINGS.sessionIdleMinutes,
         [`${apiType}_apiKey`]: document.getElementById('apiKey').value.trim(),
-        [`${apiType}_apiBase`]: apiType === 'custom'
-            ? document.getElementById('apiBase').value.trim()
-            : (document.getElementById('apiBase').value.trim() || API_CONFIGS[apiType].apiBase),
+        [`${apiType}_apiBase`]: document.getElementById('apiBase').value.trim() || API_CONFIGS[apiType].apiBase,
+        [`${apiType}_apiPath`]: document.getElementById('apiPath').value.trim() || API_CONFIGS[apiType].apiPath,
         [`${apiType}_model`]: document.getElementById('model').value.trim()
     };
     settings.activeConfig = {
         apiKey: settings[`${apiType}_apiKey`],
         apiBase: settings[`${apiType}_apiBase`],
+        apiPath: settings[`${apiType}_apiPath`],
         model: settings[`${apiType}_model`]
     };
     return settings;
@@ -408,30 +453,8 @@ function buildSettingsFromForm(apiType) {
 
 // 保存设置到Chrome存储
 async function saveOptions() {
-    const apiType = document.getElementById('apiType').value;
-    const settings = {
-        apiType,
-        maxTokens: parseInt(document.getElementById('maxTokensInput').value),
-        temperature: parseFloat(document.getElementById('temperatureInput').value),
-        enableSessionLogging: document.getElementById('enableSessionLogging').checked,
-        sessionLogEndpoint: document.getElementById('sessionLogEndpoint').value.trim() || DEFAULT_SETTINGS.sessionLogEndpoint,
-        sessionLogOutputDir: document.getElementById('sessionLogOutputDir').value.trim() || DEFAULT_SETTINGS.sessionLogOutputDir,
-        sessionLogWorkspaceRoot: document.getElementById('sessionLogWorkspaceRoot').value.trim() || DEFAULT_SETTINGS.sessionLogWorkspaceRoot,
-        sessionIdleMinutes: parseInt(document.getElementById('sessionIdleMinutes').value, 10) || DEFAULT_SETTINGS.sessionIdleMinutes,
-        // 存储当前API类型的配置
-        [`${apiType}_apiKey`]: document.getElementById('apiKey').value.trim(),
-        [`${apiType}_apiBase`]: apiType === 'custom'
-            ? document.getElementById('apiBase').value.trim()
-            : (document.getElementById('apiBase').value.trim() || API_CONFIGS[apiType].apiBase),
-        [`${apiType}_model`]: document.getElementById('model').value.trim()
-    };
-
-    // 添加当前活动的配置到settings中
-    settings.activeConfig = {
-        apiKey: settings[`${apiType}_apiKey`],
-        apiBase: settings[`${apiType}_apiBase`],
-        model: settings[`${apiType}_model`]
-    };
+    const apiType = normalizeApiType(document.getElementById('apiType').value);
+    const settings = buildSettingsFromForm(apiType);
 
     try {
         // 验证必填项
@@ -439,6 +462,7 @@ async function saveOptions() {
             apiType,
             apiKey: settings[`${apiType}_apiKey`],
             apiBase: settings[`${apiType}_apiBase`],
+            apiPath: settings[`${apiType}_apiPath`],
             model: settings[`${apiType}_model`]
         });
 
@@ -455,14 +479,14 @@ async function saveOptions() {
                 apiType,
                 apiKey: settings[`${apiType}_apiKey`],
                 apiBase: settings[`${apiType}_apiBase`],
+                apiPath: settings[`${apiType}_apiPath`],
                 model: settings[`${apiType}_model`]
             });
             testResults.push('✅ API 配置测试通过');
         } catch (e) {
             testResults.push(
                 `⚠️ API 测试未通过（${e.message}）\n` +
-                `注意：设置页的测试受浏览器 CORS 限制，实际对话走扩展后台（不受限），` +
-                `所以这里失败不代表真的用不了。回到网页直接试一下对话即可。`
+                `测试请求已通过扩展后台发送，请检查协议、API 主机、路径、Key 和模型是否匹配。`
             );
         }
 
@@ -486,14 +510,28 @@ async function saveOptions() {
 // 从Chrome存储加载设置
 function loadOptions() {
     chrome.storage.sync.get({
-        apiType: 'custom',
+        apiType: 'openai_chat',
         maxTokens: 2048,
         temperature: 0.7,
-        // 自定义API的默认配置
+        openai_chat_apiKey: '',
+        openai_chat_apiBase: API_CONFIGS.openai_chat.apiBase,
+        openai_chat_apiPath: API_CONFIGS.openai_chat.apiPath,
+        openai_chat_model: '',
+        responses_apiKey: '',
+        responses_apiBase: API_CONFIGS.responses.apiBase,
+        responses_apiPath: API_CONFIGS.responses.apiPath,
+        responses_model: '',
+        claude_apiKey: '',
+        claude_apiBase: API_CONFIGS.claude.apiBase,
+        claude_apiPath: API_CONFIGS.claude.apiPath,
+        claude_model: API_CONFIGS.claude.modelPlaceholder,
+        gemini_apiKey: '',
+        gemini_apiBase: API_CONFIGS.gemini.apiBase,
+        gemini_apiPath: API_CONFIGS.gemini.apiPath,
+        gemini_model: '',
         custom_apiKey: '',
         custom_apiBase: '',
         custom_model: '',
-        // ollama的默认配置
         ollama_apiKey: '',
         ollama_apiBase: API_CONFIGS.ollama.apiBase,
         ollama_model: API_CONFIGS.ollama.modelPlaceholder,
@@ -503,7 +541,8 @@ function loadOptions() {
         sessionLogWorkspaceRoot: '~/pagelens-workspace',
         sessionIdleMinutes: 30
     }, (items) => {
-        document.getElementById('apiType').value = items.apiType;
+        const apiType = normalizeApiType(items.apiType);
+        document.getElementById('apiType').value = apiType;
         document.getElementById('enableSessionLogging').checked = items.enableSessionLogging;
         document.getElementById('sessionLogEndpoint').value = items.sessionLogEndpoint;
         document.getElementById('sessionLogOutputDir').value = items.sessionLogOutputDir;
@@ -520,20 +559,36 @@ function loadOptions() {
         // 更新温度显示
         updateTemperatureDisplay(items.temperature);
 
-        updateApiTypeUI(items.apiType);
+        updateApiTypeUI(apiType);
     });
 }
 
 // 在现有代码中添加默认设置常量
 const DEFAULT_SETTINGS = {
-    apiType: 'custom',
+    apiType: 'openai_chat',
     maxTokens: 2048,
     temperature: 0.7,
     // 请在扩展设置页填写密钥与端点；此处默认值保持为空，避免泄露。
+    openai_chat_apiKey: '',
+    openai_chat_apiBase: 'https://api.openai.com/v1',
+    openai_chat_apiPath: '/chat/completions',
+    openai_chat_model: '',
+    responses_apiKey: '',
+    responses_apiBase: 'https://api.openai.com/v1',
+    responses_apiPath: '/responses',
+    responses_model: '',
+    claude_apiKey: '',
+    claude_apiBase: 'https://api.anthropic.com/v1',
+    claude_apiPath: '/messages',
+    claude_model: 'claude-sonnet-4-5',
+    gemini_apiKey: '',
+    gemini_apiBase: 'https://generativelanguage.googleapis.com/v1beta',
+    gemini_apiPath: '/models/{model}:generateContent',
+    gemini_model: '',
     custom_apiKey: '',
     custom_apiBase: '',
     custom_model: '',
-    ollama_apiKey: 'ollama',
+    ollama_apiKey: '',
     ollama_apiBase: 'http://127.0.0.1:11434/api/chat',
     ollama_model: 'llama2',
     anthropic_apiKey: '',
@@ -556,24 +611,26 @@ async function resetOptions() {
             ...DEFAULT_SETTINGS,
             // 添加activeConfig
             activeConfig: {
-                apiKey: DEFAULT_SETTINGS.custom_apiKey,
-                apiBase: DEFAULT_SETTINGS.custom_apiBase,
-                model: DEFAULT_SETTINGS.custom_model
+                apiKey: DEFAULT_SETTINGS.openai_chat_apiKey,
+                apiBase: DEFAULT_SETTINGS.openai_chat_apiBase,
+                apiPath: DEFAULT_SETTINGS.openai_chat_apiPath,
+                model: DEFAULT_SETTINGS.openai_chat_model
             }
         });
 
         // 更新UI显示
         document.getElementById('apiType').value = DEFAULT_SETTINGS.apiType;
-        document.getElementById('apiKey').value = DEFAULT_SETTINGS.custom_apiKey;
-        document.getElementById('apiBase').value = DEFAULT_SETTINGS.custom_apiBase;
-        document.getElementById('model').value = DEFAULT_SETTINGS.custom_model;
+        document.getElementById('apiKey').value = DEFAULT_SETTINGS.openai_chat_apiKey;
+        document.getElementById('apiBase').value = DEFAULT_SETTINGS.openai_chat_apiBase;
+        document.getElementById('apiPath').value = DEFAULT_SETTINGS.openai_chat_apiPath;
+        document.getElementById('model').value = DEFAULT_SETTINGS.openai_chat_model;
         document.getElementById('enableSessionLogging').checked = DEFAULT_SETTINGS.enableSessionLogging;
         document.getElementById('sessionLogEndpoint').value = DEFAULT_SETTINGS.sessionLogEndpoint;
         document.getElementById('sessionLogOutputDir').value = DEFAULT_SETTINGS.sessionLogOutputDir;
         document.getElementById('sessionLogWorkspaceRoot').value = DEFAULT_SETTINGS.sessionLogWorkspaceRoot;
         document.getElementById('sessionIdleMinutes').value = DEFAULT_SETTINGS.sessionIdleMinutes;
         document.getElementById('sessionLogSettings').style.display = 'block';
-        await chrome.storage.local.remove('floatingIconDataUrl');
+        await chrome.storage.local.remove(['floatingIconDataUrl', 'mentorPrompts']);
         setFloatingIconPreview('');
         updateMaxTokensDisplay(DEFAULT_SETTINGS.maxTokens);
         updateTemperatureDisplay(DEFAULT_SETTINGS.temperature);
@@ -581,21 +638,27 @@ async function resetOptions() {
         // 强制更新输入框显示
         const apiKeyInput = document.getElementById('apiKey');
         const apiBaseInput = document.getElementById('apiBase');
+        const apiPathInput = document.getElementById('apiPath');
         const modelInput = document.getElementById('model');
 
         // 设置输入框的值和占位符
-        apiKeyInput.value = DEFAULT_SETTINGS.custom_apiKey;
-        apiKeyInput.placeholder = API_CONFIGS.custom.apiKeyPlaceholder;
+        apiKeyInput.value = DEFAULT_SETTINGS.openai_chat_apiKey;
+        apiKeyInput.placeholder = API_CONFIGS.openai_chat.apiKeyPlaceholder;
 
-        apiBaseInput.value = DEFAULT_SETTINGS.custom_apiBase;
-        apiBaseInput.placeholder = API_CONFIGS.custom.apiBasePlaceholder;
+        apiBaseInput.value = DEFAULT_SETTINGS.openai_chat_apiBase;
+        apiBaseInput.placeholder = API_CONFIGS.openai_chat.apiBasePlaceholder;
 
-        modelInput.value = DEFAULT_SETTINGS.custom_model;
-        modelInput.placeholder = API_CONFIGS.custom.modelPlaceholder;
+        apiPathInput.value = DEFAULT_SETTINGS.openai_chat_apiPath;
+        apiPathInput.placeholder = API_CONFIGS.openai_chat.apiPathPlaceholder;
+        apiPathInput.disabled = false;
+
+        modelInput.value = DEFAULT_SETTINGS.openai_chat_model;
+        modelInput.placeholder = API_CONFIGS.openai_chat.modelPlaceholder;
 
         // 更新帮助文本
-        document.getElementById('apiBaseHelp').textContent = 'API接口地址';
-        document.getElementById('modelHelp').textContent = API_CONFIGS.custom.modelHelp;
+        document.getElementById('apiBaseHelp').textContent = '可填 API 主机，也可粘贴完整端点；保存和测试时会自动归一化';
+        document.getElementById('apiPathHelp').textContent = '留空使用当前协议默认路径；Gemini 路径里的 {model} 会自动替换';
+        document.getElementById('modelHelp').textContent = API_CONFIGS.openai_chat.modelHelp;
 
         // 确保API密钥输入组可见（因为默认是custom类型）
         document.querySelector('.api-key-group').style.display = 'block';
@@ -641,9 +704,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     const sessionIdleMinutes = document.getElementById('sessionIdleMinutes');
     const floatingIconUpload = document.getElementById('floatingIconUpload');
     const clearFloatingIcon = document.getElementById('clearFloatingIcon');
+    const fetchModelsButton = document.getElementById('fetchModels');
 
     apiType.addEventListener('change', (e) => {
-        updateApiTypeUI(e.target.value);
+        const normalized = normalizeApiType(e.target.value);
+        e.target.value = normalized;
+        updateApiTypeUI(normalized);
+    });
+
+    fetchModelsButton.addEventListener('click', async () => {
+        const currentApiType = normalizeApiType(apiType.value);
+        const config = {
+            apiType: currentApiType,
+            apiKey: apiKeyInput.value.trim(),
+            apiBase: document.getElementById('apiBase').value.trim() || API_CONFIGS[currentApiType].apiBase,
+            apiPath: document.getElementById('apiPath').value.trim() || API_CONFIGS[currentApiType].apiPath,
+            model: document.getElementById('model').value.trim()
+        };
+        try {
+            validateSettings({
+                apiType: currentApiType,
+                apiKey: config.apiKey,
+                apiBase: config.apiBase,
+                apiPath: config.apiPath,
+                model: config.model || 'model-placeholder'
+            });
+            fetchModelsButton.disabled = true;
+            showStatus('正在获取模型...', 'warning');
+            const response = await runtimeRequest({
+                action: 'fetchApiModels',
+                config
+            });
+            if (!response || response.status !== 'ok') {
+                throw new Error(response?.error || '获取模型失败');
+            }
+            renderModelList(response.models || []);
+            showStatus(`✅ 已获取 ${response.models.length} 个模型`);
+        } catch (error) {
+            showStatus(error.message, 'error');
+        } finally {
+            fetchModelsButton.disabled = false;
+        }
+    });
+
+    document.getElementById('model').addEventListener('focus', () => {
+        if (modelList && modelList.children.length > 0) {
+            modelList.style.display = 'block';
+        }
     });
 
     maxTokensRange.addEventListener('input', (e) => {
@@ -651,7 +758,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     maxTokensInput.addEventListener('input', (e) => {
-        if (validateNumberInput(e.target, 128, 4096)) {
+        if (validateNumberInput(e.target, MAX_TOKENS_MIN, MAX_TOKENS_MAX)) {
             updateMaxTokensDisplay(e.target.value);
         }
     });
@@ -690,7 +797,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const saveNoTestButton = document.getElementById('saveNoTest');
     if (saveNoTestButton) {
         saveNoTestButton.addEventListener('click', async () => {
-            if (!validateNumberInput(maxTokensInput, 128, 4096) ||
+            if (!validateNumberInput(maxTokensInput, MAX_TOKENS_MIN, MAX_TOKENS_MAX) ||
                 !validateNumberInput(temperatureInput, 0, 1, true)) {
                 return;
             }
@@ -699,7 +806,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     saveButton.addEventListener('click', async () => {
-        if (!validateNumberInput(maxTokensInput, 128, 4096) ||
+        if (!validateNumberInput(maxTokensInput, MAX_TOKENS_MIN, MAX_TOKENS_MAX) ||
             !validateNumberInput(temperatureInput, 0, 1, true)) {
             return;
         }
@@ -886,7 +993,7 @@ function initMentorPromptsEditor() {
         (f) => f !== MentorAPI.MENTOR_FLAVORS.OFF
     );
 
-    chrome.storage.sync.get({ mentorPrompts: {}, mentorLabels: {} }, ({ mentorPrompts, mentorLabels }) => {
+    loadMentorEditorData().then(({ mentorPrompts, mentorLabels }) => {
         const overrides = mentorPrompts || {};
         const labelOverrides = mentorLabels || {};
         const saveTimers = {};
@@ -901,11 +1008,16 @@ function initMentorPromptsEditor() {
             Object.keys(saveTimers).forEach((k) => { if (saveTimers[k]) { clearTimeout(saveTimers[k]); saveTimers[k] = null; } });
             Object.keys(labelSaveTimers).forEach((k) => { if (labelSaveTimers[k]) { clearTimeout(labelSaveTimers[k]); labelSaveTimers[k] = null; } });
 
-            const stored = await new Promise((resolve) => {
-                chrome.storage.sync.get({ mentorPrompts: {}, mentorLabels: {} }, resolve);
-            });
-            const nextPrompts = { ...(stored.mentorPrompts || {}) };
-            const nextLabels = { ...(stored.mentorLabels || {}) };
+            const [storedLocal, storedSync] = await Promise.all([
+                storageGet('local', { mentorPrompts: null }),
+                storageGet('sync', { mentorPrompts: {}, mentorLabels: {} })
+            ]);
+            const nextPrompts = {
+                ...((storedLocal.mentorPrompts && typeof storedLocal.mentorPrompts === 'object')
+                    ? storedLocal.mentorPrompts
+                    : (storedSync.mentorPrompts || {}))
+            };
+            const nextLabels = { ...(storedSync.mentorLabels || {}) };
 
             Object.keys(rowsByFlavor).forEach((flavor) => {
                 const row = rowsByFlavor[flavor];
@@ -919,7 +1031,10 @@ function initMentorPromptsEditor() {
                 }
             });
 
-            await chrome.storage.sync.set({ mentorPrompts: nextPrompts, mentorLabels: nextLabels });
+            await Promise.all([
+                storageSet('local', { mentorPrompts: nextPrompts }),
+                storageSet('sync', { mentorLabels: nextLabels })
+            ]);
         };
         PENDING_FLUSHERS.add(flushPendingMentorEdits);
         container.__mentorFlusher = flushPendingMentorEdits;
@@ -1038,21 +1153,31 @@ function initMentorPromptsEditor() {
                     : (isCustom ? '空槽位' : '使用默认');
             }
 
-            // 提示词：1 秒防抖保存
+            // 提示词：1 秒防抖保存。正文走 local，避免 sync 单项 8192 字节限制。
             textarea.addEventListener('input', () => {
                 refreshState();
                 if (saveTimers[flavor]) clearTimeout(saveTimers[flavor]);
-                saveTimers[flavor] = setTimeout(() => {
-                    chrome.storage.sync.get({ mentorPrompts: {} }, ({ mentorPrompts }) => {
-                        const next = { ...(mentorPrompts || {}) };
+                saveTimers[flavor] = setTimeout(async () => {
+                    try {
+                        const [storedLocal, storedSync] = await Promise.all([
+                            storageGet('local', { mentorPrompts: null }),
+                            storageGet('sync', { mentorPrompts: {} })
+                        ]);
+                        const next = {
+                            ...((storedLocal.mentorPrompts && typeof storedLocal.mentorPrompts === 'object')
+                                ? storedLocal.mentorPrompts
+                                : (storedSync.mentorPrompts || {}))
+                        };
                         const v = (textarea.value || '').trim();
                         if (v) {
                             next[flavor] = v;
                         } else {
                             delete next[flavor];
                         }
-                        chrome.storage.sync.set({ mentorPrompts: next });
-                    });
+                        await storageSet('local', { mentorPrompts: next });
+                    } catch (error) {
+                        showStatus('带教提示词保存失败：' + error.message, 'error');
+                    }
                 }, 800);
             });
 
@@ -1078,6 +1203,8 @@ function initMentorPromptsEditor() {
                 });
             }
         });
+    }).catch((error) => {
+        container.textContent = '带教提示词加载失败：' + error.message;
     });
 }
 

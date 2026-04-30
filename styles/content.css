@@ -379,6 +379,103 @@ html.ai-assistant-panel-open .ball-container {
     max-height: 120px !important;
 }
 
+#ai-assistant-dialog .input-container.has-image-input textarea {
+    padding-left: 44px !important;
+}
+
+#ai-assistant-dialog .input-container.has-image-input #askButton {
+    bottom: 18px !important;
+    transform: none !important;
+}
+
+#ai-assistant-dialog .image-attachment-button {
+    position: absolute !important;
+    left: 24px !important;
+    bottom: 18px !important;
+    width: 28px !important;
+    height: 28px !important;
+    border: 1px solid #E5E7EB !important;
+    border-radius: 50% !important;
+    background: #FFFFFF !important;
+    color: #4B5563 !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 14px !important;
+    z-index: 2 !important;
+}
+
+#ai-assistant-dialog .image-attachment-button:hover {
+    background: #F3F4F6 !important;
+    border-color: #D1D5DB !important;
+}
+
+#ai-assistant-dialog .image-attachment-file {
+    display: none !important;
+}
+
+#ai-assistant-dialog .image-attachment-strip {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    padding: 0 36px 0 4px !important;
+}
+
+#ai-assistant-dialog .image-attachment-strip[hidden] {
+    display: none !important;
+}
+
+#ai-assistant-dialog .image-attachment-preview {
+    position: relative !important;
+    width: 56px !important;
+    height: 56px !important;
+    border-radius: 8px !important;
+    overflow: hidden !important;
+    border: 1px solid #E5E7EB !important;
+    background: #F9FAFB !important;
+}
+
+#ai-assistant-dialog .image-attachment-preview img {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+}
+
+#ai-assistant-dialog .image-attachment-remove {
+    position: absolute !important;
+    top: 3px !important;
+    right: 3px !important;
+    width: 18px !important;
+    height: 18px !important;
+    border-radius: 50% !important;
+    background: rgba(17, 24, 39, 0.78) !important;
+    color: #FFFFFF !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 14px !important;
+    line-height: 18px !important;
+}
+
+#ai-assistant-dialog .message-attachments {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    margin-top: 8px !important;
+}
+
+#ai-assistant-dialog .message-attachments img {
+    display: block !important;
+    max-width: 180px !important;
+    max-height: 180px !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+    object-fit: cover !important;
+}
+
 #ai-assistant-dialog #askButton {
     position: absolute !important;
     right: 24px !important;
@@ -1094,8 +1191,8 @@ webchat-hl:hover {
 #ai-assistant-dialog .mentor-popover {
     position: absolute !important;
     top: calc(100% + 6px) !important;
-    right: 0 !important;
-    z-index: 10 !important;
+    left: 0 !important;
+    z-index: 100 !important;
     background: #fff !important;
     border: 1px solid #e5e7eb !important;
     border-radius: 10px !important;
@@ -1427,7 +1524,8 @@ webchat-hl:hover {
 #ai-assistant-dialog .history-drawer-head {
     display: flex !important;
     align-items: center !important;
-    justify-content: space-between !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
     padding: 10px 14px !important;
     border-bottom: 1px solid #eef0f2 !important;
     background: #f9fafb !important;
@@ -1437,7 +1535,27 @@ webchat-hl:hover {
 }
 
 #ai-assistant-dialog .history-drawer-head .hd-title {
+    flex: 1 !important;
     font-size: 13px !important;
+    min-width: 0 !important;
+}
+
+#ai-assistant-dialog .history-drawer-head .hd-back {
+    height: 26px !important;
+    padding: 0 8px !important;
+    border: none !important;
+    background: transparent !important;
+    color: #4b5563 !important;
+    font-size: 12px !important;
+    line-height: 1 !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+}
+
+#ai-assistant-dialog .history-drawer-head .hd-back:hover {
+    background: #e5e7eb !important;
+    color: #111 !important;
 }
 
 #ai-assistant-dialog .history-drawer-head .hd-close {

@@ -42,6 +42,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const chatModeButtons = chatModeGroup ? Array.from(chatModeGroup.querySelectorAll('.chat-mode-btn')) : [];
     const chatModeHint = document.getElementById('chatModeHint');
     const clientId = `popup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const imageInput = self.WebChatImageInput?.createImageInputController({
+        container: document.querySelector('.input-container'),
+        input: userInput,
+        onError: (message) => addMessage(message, false)
+    });
 
     let isGenerating = false;
     let currentChatMode = 'web_persisted';
@@ -82,9 +87,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     function refreshMentorOverrides(cb) {
         try {
             chrome.storage.sync.get({ mentorPrompts: {}, mentorLabels: {} }, ({ mentorPrompts, mentorLabels }) => {
-                mentorOverrides.prompts = mentorPrompts || {};
-                mentorOverrides.labels = mentorLabels || {};
-                if (cb) cb();
+                chrome.storage.local.get({ mentorPrompts: null }, ({ mentorPrompts: localPrompts }) => {
+                    mentorOverrides.prompts = (localPrompts && typeof localPrompts === 'object') ? localPrompts : (mentorPrompts || {});
+                    mentorOverrides.labels = mentorLabels || {};
+                    if (cb) cb();
+                });
             });
         } catch (e) { /* ignore */ }
     }
@@ -150,7 +157,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     refreshMentorOverrides(() => buildMentorPopover());
     try {
         chrome.storage.onChanged.addListener((changes, area) => {
-            if (area !== 'sync') return;
+            if (area !== 'sync' && area !== 'local') return;
             if (changes.mentorPrompts || changes.mentorLabels) {
                 refreshMentorOverrides(() => buildMentorPopover());
             }
@@ -259,7 +266,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             try {
                 await chrome.scripting.executeScript({
                     target: { tabId: targetTabId },
-                    files: ['content.js']
+                    files: [
+                        'lib/marked.min.js',
+                        'lib/pdf.min.js',
+                        'shared/chatModes.js',
+                        'shared/mentorModes.js',
+                        'shared/slashCommands.js',
+                        'shared/pdfParser.js',
+                        'shared/videoContext.js',
+                        'shared/imageInput.js',
+                        'content.js'
+                    ]
                 });
                 await new Promise((resolve) => setTimeout(resolve, 100));
                 return true;
@@ -270,11 +287,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    async function getPageContent(currentTab, maxRetries = 3) {
+    async function getPageContent(currentTab, contextSource = 'full', maxRetries = 3) {
         for (let i = 0; i < maxRetries; i += 1) {
             try {
                 await ensureContentScriptLoaded(currentTab.id);
-                const response = await chrome.tabs.sendMessage(currentTab.id, { action: 'getPageContent' });
+                const action = contextSource === 'video' ? 'getVideoPageContent' : 'getPageContent';
+                const response = await chrome.tabs.sendMessage(currentTab.id, { action });
                 return response.content;
             } catch (error) {
                 if (i === maxRetries - 1) {
@@ -286,7 +304,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return '';
     }
 
-    function addMessage(content, isUser = false) {
+    function addMessage(content, isUser = false, attachments = []) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
 
@@ -294,6 +312,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             messageDiv.setAttribute('data-pending', 'true');
         } else if (isUser) {
             messageDiv.textContent = content;
+            self.WebChatImageInput?.renderMessageAttachments(messageDiv, attachments);
         } else {
             try {
                 messageDiv.innerHTML = markedInstance(content);
@@ -301,6 +320,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 console.error('Markdown渲染失败:', error);
                 messageDiv.textContent = content;
             }
+            self.WebChatImageInput?.renderMessageAttachments(messageDiv, attachments);
         }
 
         messagesContainer.appendChild(messageDiv);
@@ -410,6 +430,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     messageDiv.className = `message ${msg.isUser ? 'user-message' : 'assistant-message'}`;
                     if (msg.isUser) {
                         messageDiv.textContent = msg.content;
+                        self.WebChatImageInput?.renderMessageAttachments(messageDiv, msg.attachments);
                     } else {
                         try {
                             messageDiv.innerHTML = markedInstance(msg.markdownContent || msg.content);
@@ -417,6 +438,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                             console.error('Markdown渲染失败:', error);
                             messageDiv.textContent = msg.content;
                         }
+                        self.WebChatImageInput?.renderMessageAttachments(messageDiv, msg.attachments);
                     }
                     messagesContainer.appendChild(messageDiv);
                 });
@@ -449,8 +471,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        const question = userInput.value.trim();
-        if (!question) {
+        const attachments = imageInput?.getAttachments() || [];
+        const question = userInput.value.trim() || (attachments.length ? '请分析这张图片。' : '');
+        if (!question && attachments.length === 0) {
             return;
         }
 
@@ -463,21 +486,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             const meta = CHAT_MODE_META[currentChatMode] || {};
             let pageContent = '';
             if (meta.contextSource === 'full') {
-                pageContent = await getPageContent(tab);
-            } else if (meta.contextSource === 'selection') {
-                await ensureContentScriptLoaded(tab.id);
-                const res = await chrome.tabs.sendMessage(tab.id, { action: 'getSelection' }).catch(() => null);
-                const sel = (res?.selection || '').trim();
-                if (!sel) {
-                    addMessage('当前是"选中+临时"模式，请先在页面上选中一段文字再提问。', false);
-                    isGenerating = false;
-                    userInput.disabled = false;
-                    askButton.disabled = false;
-                    userInput.value = question;
-                    userInput.focus();
-                    return;
-                }
-                pageContent = sel;
+                pageContent = await getPageContent(tab, 'full');
+            } else if (meta.contextSource === 'video') {
+                pageContent = await getPageContent(tab, 'video');
             }
             const prepare = await chrome.runtime.sendMessage({
                 action: 'prepareGeneration',
@@ -496,7 +507,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 resetMessagesUI(true);
             }
 
-            addMessage(question, true);
+            imageInput?.clear();
+            addMessage(question, true, attachments);
             const messageDiv = addMessage('', false);
             const typingIndicator = addTypingIndicator();
             const port = chrome.runtime.connect({ name: 'answerStream' });
@@ -506,6 +518,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 tabId,
                 pageContent,
                 question,
+                attachments,
                 requestId: prepare.requestId,
                 clientId,
                 sessionReset: prepare.sessionReset

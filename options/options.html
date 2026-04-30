@@ -81,8 +81,10 @@
             <div class="form-group">
                 <label for="apiType">API类型:</label>
                 <select id="apiType">
-                    <option value="custom">自定义API (OpenAI 兼容)</option>
-                    <option value="anthropic">Anthropic Claude (v1/messages + prompt caching)</option>
+                    <option value="openai_chat">OpenAI API 兼容</option>
+                    <option value="responses">OpenAI Responses API 兼容</option>
+                    <option value="claude">Claude API 兼容</option>
+                    <option value="gemini">Google Gemini API 兼容</option>
                     <option value="ollama">本地模型(Ollama)</option>
                 </select>
             </div>
@@ -106,24 +108,34 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="apiBase">请求URL: <span class="required-mark">*</span></label>
+                    <label for="apiBase">API 主机: <span class="required-mark">*</span></label>
                     <input type="text" id="apiBase" placeholder="">
                     <small class="help-text" id="apiBaseHelp">API接口地址</small>
                 </div>
 
                 <div class="form-group">
+                    <label for="apiPath">API 路径:</label>
+                    <input type="text" id="apiPath" placeholder="">
+                    <small class="help-text" id="apiPathHelp">留空使用当前协议默认路径</small>
+                </div>
+
+                <div class="form-group">
                     <label for="model">AI模型: <span class="required-mark">*</span></label>
-                    <input type="text" id="model" placeholder="">
+                    <div class="model-input-row">
+                        <input type="text" id="model" placeholder="">
+                        <button id="fetchModels" type="button" class="secondary-button">获取模型</button>
+                    </div>
+                    <div id="modelList" class="model-list"></div>
                     <small class="help-text" id="modelHelp">模型名称</small>
                 </div>
             </div>
             <div class="form-group">
                 <label for="maxTokens">最大回复长度:</label>
                 <div class="range-with-input">
-                    <input type="range" id="maxTokensRange" min="128" max="4096" value="2048" step="1">
-                    <input type="number" id="maxTokensInput" min="128" max="4096" value="2048">
+                    <input type="range" id="maxTokensRange" min="128" max="32768" value="2048" step="1">
+                    <input type="number" id="maxTokensInput" min="128" max="32768" value="2048">
                 </div>
-                <small class="help-text">调整范围：128 ~ 4096 tokens</small>
+                <small class="help-text">调整范围：128 ~ 32768 tokens</small>
             </div>
 
             <div class="form-group">

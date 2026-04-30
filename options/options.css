@@ -319,6 +319,46 @@ input[type="number"].invalid {
     justify-content: flex-start;
 }
 
+.model-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.model-input-row .secondary-button {
+    white-space: nowrap;
+    padding: 8px 12px;
+    font-size: 14px;
+}
+
+.model-list {
+    display: none;
+    margin-top: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    max-height: 220px;
+    overflow: auto;
+    background: #fff;
+}
+
+.model-item {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 0;
+    background: #fff;
+    color: #333;
+    text-align: left;
+    font-size: 13px;
+}
+
+.model-item:hover,
+.model-item.active {
+    background: #eef7ee;
+}
+
 .secondary-button {
     background-color: #6c757d;
     color: white;

@@ -1,11 +1,27 @@
 const DEFAULT_SETTINGS = {
-    apiType: 'custom',
+    apiType: 'openai_chat',
     maxTokens: 2048,
     temperature: 0.7,
     enableContext: true,
     maxContextRounds: 5,
     systemPrompt: '你是一个帮助理解网页内容的AI助手。请使用Markdown格式回复。',
     // 请在扩展设置页填写密钥与端点；此处默认值保持为空，避免泄露。
+    openai_chat_apiKey: '',
+    openai_chat_apiBase: 'https://api.openai.com/v1',
+    openai_chat_apiPath: '/chat/completions',
+    openai_chat_model: '',
+    responses_apiKey: '',
+    responses_apiBase: 'https://api.openai.com/v1',
+    responses_apiPath: '/responses',
+    responses_model: '',
+    claude_apiKey: '',
+    claude_apiBase: 'https://api.anthropic.com/v1',
+    claude_apiPath: '/messages',
+    claude_model: 'claude-sonnet-4-5',
+    gemini_apiKey: '',
+    gemini_apiBase: 'https://generativelanguage.googleapis.com/v1beta',
+    gemini_apiPath: '/models/{model}:generateContent',
+    gemini_model: '',
     custom_apiKey: '',
     custom_apiBase: '',
     custom_model: '',
@@ -63,6 +79,16 @@ let sessionsState = {};
 let pendingLogsState = {};
 let stateLoadedPromise = null;
 let saveStateTimer = null;
+const MAX_IMAGE_ATTACHMENTS = 4;
+const MAX_IMAGE_DATA_URL_LENGTH = 1400000;
+
+function normalizeApiType(apiType) {
+    if (apiType === 'custom') return 'openai_chat';
+    if (apiType === 'anthropic') return 'claude';
+    return ['openai_chat', 'responses', 'claude', 'gemini', 'ollama'].includes(apiType)
+        ? apiType
+        : 'openai_chat';
+}
 
 chrome.runtime.onInstalled.addListener(() => {
     console.log('扩展已安装');
@@ -110,12 +136,15 @@ chrome.runtime.onConnect.addListener((port) => {
 });
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace !== 'sync') {
+    if (namespace !== 'sync' && namespace !== 'local') {
         return;
     }
 
-    if (changes.systemPrompt) {
+    if (namespace === 'sync' && changes.systemPrompt) {
         console.log('系统提示词已更新');
+    }
+    if (changes.mentorPrompts) {
+        console.log('带教提示词已更新');
     }
 });
 
@@ -218,7 +247,38 @@ async function handleRuntimeMessage(request, sender) {
         return await fetchPdfBytesFromBackground(request.url || '');
     }
 
+    if (action === 'fetchText') {
+        return await fetchTextFromBackground(request.url || '', request.credentials || 'omit');
+    }
+
+    if (action === 'fetchApiModels') {
+        return await fetchApiModels(request.config || {});
+    }
+
+    if (action === 'testApiConfig') {
+        return await testApiConfigFromBackground(request.config || {});
+    }
+
     return { status: 'unknown-action' };
+}
+
+async function fetchTextFromBackground(url, credentials = 'omit') {
+    if (!url) return { status: 'error', error: 'empty url' };
+    try {
+        const resp = await fetch(url, {
+            credentials: credentials === 'include' ? 'include' : 'omit'
+        });
+        if (!resp.ok) {
+            return { status: 'error', error: `HTTP ${resp.status}` };
+        }
+        return {
+            status: 'ok',
+            text: await resp.text(),
+            contentType: resp.headers.get('content-type') || ''
+        };
+    } catch (error) {
+        return { status: 'error', error: String(error && error.message || error) };
+    }
 }
 
 // 从扩展（service worker）上下文 fetch PDF 字节，主要用于绕开
@@ -265,6 +325,20 @@ async function handlePortMessage(port, request) {
     if (request.action === 'stopGeneration') {
         await stopGeneration(tabId, request.reason || 'manual-stop');
     }
+}
+
+async function loadSettings() {
+    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    settings.apiType = normalizeApiType(settings.apiType);
+    try {
+        const local = await chrome.storage.local.get({ mentorPrompts: null });
+        if (local.mentorPrompts && typeof local.mentorPrompts === 'object') {
+            settings.mentorPrompts = local.mentorPrompts;
+        }
+    } catch (error) {
+        console.warn('读取本地带教提示词失败，使用同步配置:', error);
+    }
+    return settings;
 }
 
 async function ensureStateLoaded() {
@@ -384,6 +458,7 @@ function normalizeHistory(history = []) {
         turnId: message.turnId || '',
         content: message.content || '',
         markdownContent: message.markdownContent || message.content || '',
+        attachments: normalizeImageAttachments(message.attachments),
         isUser: Boolean(message.isUser),
         createdAt: message.createdAt || new Date().toISOString()
     }));
@@ -399,6 +474,7 @@ function normalizeTurns(turns = []) {
         shouldPersist: Boolean(turn.shouldPersist),
         pageSnapshot: normalizePageSnapshot(turn.pageSnapshot),
         question: turn.question || '',
+        attachments: normalizeImageAttachments(turn.attachments),
         answer: turn.answer || '',
         status: turn.status || 'completed',
         errorMessage: turn.errorMessage || ''
@@ -511,7 +587,7 @@ async function getHistoryForTab(tabId) {
 }
 
 async function prepareGeneration(tabId, pageContent, question) {
-    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const settings = await loadSettings();
     await flushPendingLogs(settings);
 
     let sessionReset = false;
@@ -600,7 +676,7 @@ async function setChatMode(tabId, chatMode) {
 
 // 手动"入库当前对话"：
 // - 把所有已存在的 turn 的 shouldPersist 回填为 true（否则 buildLogPayload 会过滤掉）
-// - 把当前模式切到对应的入库变体（web_* → web_persisted；chat_* → chat_persisted）
+// - 把当前模式切到对应的入库变体（web_* → web_persisted；video_* → video_persisted；chat_* → chat_persisted）
 // - 立即触发一次 persistSessionLog 写出到本地日志服务
 // - 若当前已是入库模式，则只是再手动落一次盘
 async function promoteSessionToPersist(tabId) {
@@ -609,14 +685,16 @@ async function promoteSessionToPersist(tabId) {
         return { status: 'error', error: '当前标签尚无会话可入库。' };
     }
 
-    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const settings = await loadSettings();
     const currentMode = session.sessionMeta.currentChatMode;
     const alreadyPersisted = modeShouldPersist(currentMode);
 
     if (!alreadyPersisted) {
-        const targetMode = modeUsesPageContext(currentMode)
-            ? CHAT_MODES.WEB_PERSISTED
-            : CHAT_MODES.CHAT_PERSISTED;
+        const targetMode = modeIsVideoContext(currentMode)
+            ? CHAT_MODES.VIDEO_PERSISTED
+            : (modeUsesPageContext(currentMode)
+                ? CHAT_MODES.WEB_PERSISTED
+                : CHAT_MODES.CHAT_PERSISTED);
 
         // 回填历史 turns，让它们都进入本次导出
         session.turns.forEach((turn) => {
@@ -686,7 +764,7 @@ function broadcastMentorFlavorUpdate(tabId, mentorFlavor, reason) {
 
 async function startGenerationFromPort(port, request) {
     const tabId = request.tabId;
-    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const settings = await loadSettings();
     await flushPendingLogs(settings);
 
     let session = getSession(tabId);
@@ -736,7 +814,8 @@ async function startGenerationFromPort(port, request) {
     }
 
     const question = (request.question || '').trim();
-    if (!question) {
+    const attachments = normalizeImageAttachments(request.attachments);
+    if (!question && attachments.length === 0) {
         sendDirectMessage(port, {
             type: 'error',
             error: '问题不能为空。'
@@ -755,7 +834,7 @@ async function startGenerationFromPort(port, request) {
     // 同一会话内换章：若当前页面正文和上次使用的 preamble 不同，追加一段新 preamble。
     // 这样做的好处：(1) 会话连贯——UI 里不打断、历史不清；(2) 每个 preamble 作为稳定前缀
     // 都可以被 Anthropic prompt caching 命中；(3) 模型能同时看到多章上下文，方便回指。
-    maybeAppendPreamble(session, tabInfo, pageContent, usesPageContext);
+    maybeAppendPreamble(session, tabInfo, pageContent, usesPageContext, chatMode);
 
     session.turns.push({
         turnId,
@@ -766,11 +845,12 @@ async function startGenerationFromPort(port, request) {
         shouldPersist,
         pageSnapshot,
         question,
+        attachments,
         answer: '',
         status: 'generating',
         errorMessage: ''
     });
-    session.history.push(createMessage(question, true, turnId));
+    session.history.push(createMessage(question, true, turnId, attachments));
     session.currentAnswer = '';
     session.completedAnswer = '';
     session.generatingState = {
@@ -847,9 +927,11 @@ async function handleAnswerGeneration(tabId, question, pageContent, settings) {
 
     try {
         const { requestMessages, promptContent } = buildMessagesForRequest(session, settings, question, pageContent, turn);
-        const model = settings[`${settings.apiType}_model`];
-        const apiKey = settings[`${settings.apiType}_apiKey`];
-        const apiBase = settings[`${settings.apiType}_apiBase`];
+        const apiType = normalizeApiType(settings.apiType);
+        const model = getApiSetting(settings, 'model');
+        const apiKey = getApiSetting(settings, 'apiKey');
+        const apiBase = getApiSetting(settings, 'apiBase');
+        const apiPath = getApiSetting(settings, 'apiPath');
 
         if (!apiBase?.trim()) {
             throw new Error('请先在设置页填写请求URL');
@@ -859,14 +941,16 @@ async function handleAnswerGeneration(tabId, question, pageContent, settings) {
             throw new Error('请先在设置页填写AI模型');
         }
 
-        if ((settings.apiType === 'custom' || settings.apiType === 'anthropic') && !apiKey?.trim()) {
+        if (apiRequiresKey(apiType) && !apiKey?.trim()) {
             throw new Error('请先在设置页填写API密钥');
         }
 
-        const requestBody = buildRequestBody(settings, model, requestMessages);
+        const requestSettings = { ...settings, apiType };
+        const requestBody = buildRequestBody(requestSettings, model, requestMessages);
         const headers = buildRequestHeaders(settings, apiKey);
+        const finalUrl = buildEndpointUrl(apiType, apiBase, apiPath, model, apiKey);
 
-        const response = await fetch(apiBase, {
+        const response = await fetch(finalUrl, {
             method: 'POST',
             headers,
             body: JSON.stringify(requestBody),
@@ -886,50 +970,66 @@ async function handleAnswerGeneration(tabId, question, pageContent, settings) {
             tokens: inputTokens
         });
 
-        const reader = response.body?.getReader();
-        if (!reader) {
-            throw new Error('响应流不可用');
-        }
-
-        const decoder = new TextDecoder();
-        let buffer = '';
         let accumulatedResponse = '';
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                break;
-            }
-
-            buffer += decoder.decode(value, { stream: true });
-            const parts = buffer.split('\n');
-            buffer = parts.pop() || '';
-
-            for (const rawLine of parts) {
-                const content = processStreamLine(settings.apiType, rawLine);
-                if (!content) {
-                    continue;
-                }
-
-                accumulatedResponse += content;
-                session.currentAnswer = accumulatedResponse;
-                touchSession(session);
-                schedulePersistentStateSave();
-
-                broadcastToTab(tabId, {
-                    type: 'answer-chunk',
-                    content,
-                    markdownContent: accumulatedResponse,
-                    tokens: Math.ceil(content.length / 4)
-                });
-            }
-        }
-
-        const remainingContent = processStreamLine(settings.apiType, buffer);
-        if (remainingContent) {
-            accumulatedResponse += remainingContent;
+        if (apiType === 'gemini') {
+            const data = await response.json();
+            accumulatedResponse = extractContentFromResponse(apiType, data);
             session.currentAnswer = accumulatedResponse;
             touchSession(session);
+            if (accumulatedResponse) {
+                broadcastToTab(tabId, {
+                    type: 'answer-chunk',
+                    content: accumulatedResponse,
+                    markdownContent: accumulatedResponse,
+                    tokens: Math.ceil(accumulatedResponse.length / 4)
+                });
+            }
+        } else {
+            const reader = response.body?.getReader();
+            if (!reader) {
+                throw new Error('响应流不可用');
+            }
+
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    break;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n');
+                buffer = parts.pop() || '';
+
+                for (const rawLine of parts) {
+                    const content = processStreamLine(apiType, rawLine);
+                    if (!content) {
+                        continue;
+                    }
+
+                    accumulatedResponse += content;
+                    session.currentAnswer = accumulatedResponse;
+                    touchSession(session);
+                    schedulePersistentStateSave();
+
+                    broadcastToTab(tabId, {
+                        type: 'answer-chunk',
+                        content,
+                        markdownContent: accumulatedResponse,
+                        tokens: Math.ceil(content.length / 4)
+                    });
+                }
+            }
+
+            const remainingContent = processStreamLine(apiType, buffer);
+            if (remainingContent) {
+                accumulatedResponse += remainingContent;
+                session.currentAnswer = accumulatedResponse;
+                touchSession(session);
+            }
         }
 
         if (accumulatedResponse) {
@@ -1023,7 +1123,7 @@ async function stopGeneration(tabId, reason) {
 // 判断当前页面是否是新章节；若是，则把正文作为新 preamble 追加到 session.preambleChain。
 // 锚点 anchor = 当时 session.history.length —— 表示这段 preamble 应该被"插入"到
 // history 里那个位置（即该章节的对话从此处开始）。
-function maybeAppendPreamble(session, tabInfo, pageContent, usesPageContext) {
+function maybeAppendPreamble(session, tabInfo, pageContent, usesPageContext, chatMode) {
     if (!usesPageContext) return;
     if (!pageContent || !pageContent.trim()) return;
 
@@ -1032,6 +1132,11 @@ function maybeAppendPreamble(session, tabInfo, pageContent, usesPageContext) {
 
     const chain = session.sessionMeta.preambleChain || [];
     const last = chain[chain.length - 1];
+    const contextKey = modeIsVideoContext(chatMode)
+        ? buildVideoContextKey(tabInfo?.pageUrl || '', pageContent)
+        : '';
+
+    if (contextKey && chain.some((pre) => getPreambleContextKey(pre) === contextKey)) return;
 
     // 相同 excerpt → 还在同一章，复用现有 preamble。
     if (last && last.excerpt === excerpt) return;
@@ -1042,14 +1147,18 @@ function maybeAppendPreamble(session, tabInfo, pageContent, usesPageContext) {
         anchor: session.history.length,
         pageTitle: tabInfo?.pageTitle || '',
         pageUrl: tabInfo?.pageUrl || '',
+        contextKey,
         createdAt: new Date().toISOString()
     });
     session.sessionMeta.preambleChain = chain;
 }
 
+function getPreambleContextKey(pre = {}) {
+    return pre.contextKey || buildVideoContextKey(pre.pageUrl || '', pre.content || '');
+}
+
 function buildMessagesForRequest(session, settings, question, pageContent, turn) {
-    const isSelectionOnly = modeIsSelectionOnly(turn.chatMode);
-    const usesPageContext = Boolean(turn.usesPageContext) && !isSelectionOnly;
+    const usesPageContext = Boolean(turn.usesPageContext);
 
     // 当前这轮的用户问题已在 startGeneration 时被 push 进 session.history，
     // 下方又会显式 push 为最后一条 user，这里先去掉 history 末尾的 user 避免重复。
@@ -1059,7 +1168,7 @@ function buildMessagesForRequest(session, settings, question, pageContent, turn)
     }
 
     // 整页上下文模式下完整保留 history，以稳定 preamble 锚点与缓存前缀；
-    // 其它模式（纯聊 / 选中）仍按 maxContextRounds 截断节省 token。
+    // 纯聊模式仍按 maxContextRounds 截断节省 token。
     if (!usesPageContext && settings.enableContext) {
         const limit = Math.max(1, settings.maxContextRounds) * 2;
         history = history.slice(-limit);
@@ -1087,7 +1196,7 @@ function buildMessagesForRequest(session, settings, question, pageContent, turn)
     const pushPreamble = (pre, markCacheable) => {
         messages.push({
             role: 'user',
-            content: `以下是当前网页的正文内容，请作为后续所有问答的共同背景。读完回复"好的"。\n\n---\n\n${pre.content}`,
+            content: `以下是当前会话的页面上下文，请作为后续所有问答的共同背景。读完回复"好的"。\n\n---\n\n${pre.content}`,
             ...(markCacheable ? { _cacheable: true } : {})
         });
         messages.push({
@@ -1108,20 +1217,22 @@ function buildMessagesForRequest(session, settings, question, pageContent, turn)
             const m = history[hi];
             messages.push({
                 role: m.isUser ? 'user' : 'assistant',
-                content: m.markdownContent || m.content
+                content: m.markdownContent || m.content,
+                ...(m.attachments?.length ? { attachments: m.attachments } : {})
             });
         }
     }
 
     // 当前轮 user 消息：
     // - 整页模式：pageContent 已在 preamble 里，这里只发原始问题
-    // - 选中模式：把选中片段拼进本轮问题
     // - 纯聊模式：直接发问题
-    const promptContent = (turn.usesPageContext && isSelectionOnly)
-        ? `基于以下用户在网页上选中的内容回答问题：\n\n${pageContent}\n\n问题：${question}`
-        : question;
+    const promptContent = question;
 
-    messages.push({ role: 'user', content: promptContent });
+    messages.push({
+        role: 'user',
+        content: promptContent || (turn.attachments?.length ? '请分析这张图片。' : ''),
+        ...(turn.attachments?.length ? { attachments: turn.attachments } : {})
+    });
 
     return {
         promptContent,
@@ -1136,7 +1247,7 @@ async function getContextDump(tabId) {
     if (!session) {
         return { status: 'error', error: '当前无活跃会话' };
     }
-    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const settings = await loadSettings();
     const history = session.history || [];
     const lastUser = [...history].reverse().find((h) => h.isUser);
     const lastQuestion = lastUser?.text || '';
@@ -1160,7 +1271,7 @@ async function getContextDump(tabId) {
         status: 'ok',
         messages: requestMessages.map((m) => ({
             role: m.role,
-            content: m.content
+            content: `${m.content || ''}${m.attachments?.length ? `\n\n[图片附件：${m.attachments.length} 张]` : ''}`
         })),
         meta: {
             sessionId: session.sessionMeta?.sessionId || '',
@@ -1172,12 +1283,26 @@ async function getContextDump(tabId) {
     };
 }
 
+function getApiSetting(settings, field) {
+    const apiType = normalizeApiType(settings.apiType);
+    const value = settings[`${apiType}_${field}`];
+    if (value) return value;
+    if (apiType === 'openai_chat') return settings[`custom_${field}`] || DEFAULT_SETTINGS[`openai_chat_${field}`] || '';
+    if (apiType === 'claude') return settings[`anthropic_${field}`] || DEFAULT_SETTINGS[`claude_${field}`] || '';
+    return DEFAULT_SETTINGS[`${apiType}_${field}`] || '';
+}
+
+function apiRequiresKey(apiType) {
+    return normalizeApiType(apiType) !== 'ollama';
+}
+
 function buildRequestBody(settings, model, messages) {
-    if (settings.apiType === 'ollama') {
+    const apiType = normalizeApiType(settings.apiType);
+    if (apiType === 'ollama') {
         // Ollama 格式：过滤内部字段 _cacheable
         return {
             model,
-            messages: messages.map(stripInternalFields),
+            messages: messages.map(buildOllamaMessage),
             stream: true,
             options: {
                 temperature: settings.temperature,
@@ -1186,14 +1311,22 @@ function buildRequestBody(settings, model, messages) {
         };
     }
 
-    if (settings.apiType === 'anthropic') {
+    if (apiType === 'claude') {
         return buildAnthropicBody(settings, model, messages, true);
+    }
+
+    if (apiType === 'responses') {
+        return buildResponsesBody(settings, model, messages, true);
+    }
+
+    if (apiType === 'gemini') {
+        return buildGeminiBody(settings, messages);
     }
 
     // OpenAI 兼容格式
     return {
         model,
-        messages: messages.map(stripInternalFields),
+        messages: messages.map(buildOpenAIMessage),
         max_tokens: settings.maxTokens,
         temperature: settings.temperature,
         stream: true
@@ -1201,8 +1334,114 @@ function buildRequestBody(settings, model, messages) {
 }
 
 function stripInternalFields(m) {
-    const { _cacheable, ...rest } = m;
+    const { _cacheable, attachments, ...rest } = m;
     return rest;
+}
+
+function buildOpenAIMessage(message) {
+    const base = stripInternalFields(message);
+    const attachments = normalizeImageAttachments(message.attachments);
+    if (!attachments.length) return base;
+
+    return {
+        role: base.role,
+        content: [
+            { type: 'text', text: base.content || '请分析这张图片。' },
+            ...attachments.map((attachment) => ({
+                type: 'image_url',
+                image_url: { url: attachment.dataUrl }
+            }))
+        ]
+    };
+}
+
+function buildOllamaMessage(message) {
+    const base = stripInternalFields(message);
+    const attachments = normalizeImageAttachments(message.attachments);
+    if (!attachments.length) return base;
+
+    return {
+        ...base,
+        content: base.content || '请分析这张图片。',
+        images: attachments.map((attachment) => imageBase64FromDataUrl(attachment.dataUrl)).filter(Boolean)
+    };
+}
+
+function buildResponsesBody(settings, model, messages, stream) {
+    const input = [];
+    let instructions = '';
+
+    for (const message of messages) {
+        if (message.role === 'system') {
+            instructions = [instructions, message.content || ''].filter(Boolean).join('\n\n');
+            continue;
+        }
+
+        const attachments = normalizeImageAttachments(message.attachments);
+        if (!attachments.length) {
+            input.push({
+                role: message.role,
+                content: message.content || ''
+            });
+            continue;
+        }
+
+        input.push({
+            role: message.role,
+            content: [
+                { type: message.role === 'assistant' ? 'output_text' : 'input_text', text: message.content || '请分析这张图片。' },
+                ...attachments.map((attachment) => ({
+                    type: 'input_image',
+                    image_url: attachment.dataUrl
+                }))
+            ]
+        });
+    }
+
+    const body = {
+        model,
+        input,
+        max_output_tokens: settings.maxTokens,
+        temperature: settings.temperature,
+        stream: Boolean(stream),
+        store: false
+    };
+    if (instructions) body.instructions = instructions;
+    return body;
+}
+
+function buildGeminiBody(settings, messages) {
+    const systemMsg = messages.find((m) => m.role === 'system');
+    const contents = messages
+        .filter((m) => m.role !== 'system')
+        .map((m) => {
+            const attachments = normalizeImageAttachments(m.attachments);
+            const parts = [{ text: m.content || '请分析这张图片。' }];
+            for (const attachment of attachments) {
+                parts.push({
+                    inlineData: {
+                        mimeType: attachment.mimeType || mimeTypeFromDataUrl(attachment.dataUrl) || 'image/jpeg',
+                        data: imageBase64FromDataUrl(attachment.dataUrl)
+                    }
+                });
+            }
+            return {
+                role: m.role === 'assistant' ? 'model' : 'user',
+                parts
+            };
+        });
+
+    const body = {
+        contents,
+        generationConfig: {
+            maxOutputTokens: settings.maxTokens,
+            temperature: settings.temperature
+        }
+    };
+    if (systemMsg?.content) {
+        body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+    }
+    return body;
 }
 
 // Anthropic v1/messages 格式：system 单独字段；大块内容附 cache_control 开启 prompt caching（90% off）
@@ -1211,9 +1450,7 @@ function buildAnthropicBody(settings, model, messages, stream) {
     const rest = messages.filter((m) => m.role !== 'system');
 
     const anthMessages = rest.map((m) => {
-        const content = m._cacheable
-            ? [{ type: 'text', text: m.content, cache_control: { type: 'ephemeral' } }]
-            : m.content;
+        const content = buildAnthropicContent(m);
         return { role: m.role, content };
     });
 
@@ -1233,45 +1470,187 @@ function buildAnthropicBody(settings, model, messages, stream) {
     return body;
 }
 
+function buildAnthropicContent(message) {
+    const attachments = normalizeImageAttachments(message.attachments);
+    if (!attachments.length) {
+        return message._cacheable
+            ? [{ type: 'text', text: message.content, cache_control: { type: 'ephemeral' } }]
+            : message.content;
+    }
+
+    const blocks = [
+        { type: 'text', text: message.content || '请分析这张图片。' }
+    ];
+
+    for (const attachment of attachments) {
+        blocks.push({
+            type: 'image',
+            source: {
+                type: 'base64',
+                media_type: attachment.mimeType || mimeTypeFromDataUrl(attachment.dataUrl) || 'image/jpeg',
+                data: imageBase64FromDataUrl(attachment.dataUrl)
+            }
+        });
+    }
+
+    return blocks;
+}
+
 function buildRequestHeaders(settings, apiKey) {
     const headers = { 'Content-Type': 'application/json' };
+    const apiType = normalizeApiType(settings.apiType);
 
-    if (settings.apiType === 'anthropic') {
+    if (apiType === 'claude') {
         if (apiKey) headers['x-api-key'] = apiKey;
         headers['anthropic-version'] = '2023-06-01';
         // 浏览器直连 Anthropic 需要此头开启 CORS 场景
         headers['anthropic-dangerous-direct-browser-access'] = 'true';
-    } else if (settings.apiType === 'custom' && apiKey) {
+    } else if ((apiType === 'openai_chat' || apiType === 'responses') && apiKey) {
         headers.Authorization = `Bearer ${apiKey}`;
     }
 
     return headers;
 }
 
+function normalizeApiPath(apiType, apiPath) {
+    const path = String(apiPath || '').trim();
+    if (path) return path.startsWith('/') ? path : `/${path}`;
+    if (apiType === 'openai_chat') return '/chat/completions';
+    if (apiType === 'responses') return '/responses';
+    if (apiType === 'claude') return '/messages';
+    if (apiType === 'gemini') return '/models/{model}:generateContent';
+    return '';
+}
+
+function stripKnownEndpointSuffix(basePath) {
+    if (basePath.endsWith(':generateContent') && basePath.includes('/models/')) {
+        return basePath.split('/models/', 1)[0].replace(/\/$/, '');
+    }
+    const suffixes = ['/chat/completions', '/responses', '/messages', ':generateContent', '/models'];
+    for (const suffix of suffixes) {
+        if (basePath.endsWith(suffix)) {
+            return basePath.slice(0, -suffix.length).replace(/\/$/, '');
+        }
+    }
+    return basePath;
+}
+
+function stripEndpointSuffix(basePath, apiPath) {
+    const plainApiPath = apiPath.replace('{model}', '').replace(/\/$/, '');
+    const candidates = [apiPath.replace(/\/$/, ''), plainApiPath, '/models']
+        .filter((item) => item && item !== '/')
+        .sort((a, b) => b.length - a.length);
+    for (const suffix of candidates) {
+        if (basePath.endsWith(suffix)) {
+            return basePath.slice(0, -suffix.length).replace(/\/$/, '');
+        }
+    }
+    return basePath;
+}
+
+function normalizeApiBaseUrl(apiType, rawUrl, apiPath) {
+    let value = String(rawUrl || '').trim();
+    if (!value) return '';
+    if (!/^https?:\/\//i.test(value)) {
+        value = `https://${value}`;
+    }
+
+    const parsed = new URL(value);
+    let path = parsed.pathname.replace(/\/$/, '');
+    path = stripKnownEndpointSuffix(path);
+    path = stripEndpointSuffix(path, apiPath);
+
+    if (['openai_chat', 'responses', 'claude'].includes(apiType) && (!path || path === '/')) {
+        path = '/v1';
+    }
+    if (apiType === 'gemini' && (!path || path === '/')) {
+        path = '/v1beta';
+    }
+
+    parsed.pathname = path;
+    parsed.hash = '';
+    return parsed.toString().replace(/\/$/, '');
+}
+
+function mergeUrlQuery(url, values) {
+    const parsed = new URL(url);
+    for (const [key, value] of Object.entries(values)) {
+        parsed.searchParams.set(key, value);
+    }
+    return parsed.toString();
+}
+
+function buildEndpointUrl(apiType, apiBase, apiPath, model, apiKey = '') {
+    if (apiType === 'ollama') return apiBase;
+    const normalizedPath = normalizeApiPath(apiType, apiPath);
+    const base = normalizeApiBaseUrl(apiType, apiBase, normalizedPath);
+    if (!base) throw new Error('请求URL是必填项');
+
+    const parsed = new URL(base);
+    const basePath = parsed.pathname.replace(/\/$/, '');
+    const path = normalizedPath.replace('{model}', encodeURIComponent(String(model || '').replace(/^models\//, '')));
+    parsed.pathname = `${basePath}${path.startsWith('/') ? path : `/${path}`}`;
+    parsed.hash = '';
+
+    let finalUrl = parsed.toString();
+    if (apiType === 'gemini') {
+        finalUrl = mergeUrlQuery(finalUrl, { key: apiKey });
+    }
+    return finalUrl;
+}
+
+function buildModelsUrl(apiType, apiBase, apiKey = '') {
+    if (apiType === 'ollama') {
+        const parsed = new URL(apiBase || 'http://127.0.0.1:11434/api/chat');
+        parsed.pathname = '/api/tags';
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString();
+    }
+    const base = normalizeApiBaseUrl(apiType, apiBase, '/models');
+    if (!base) throw new Error('请求URL是必填项');
+    const parsed = new URL(base);
+    parsed.pathname = `${parsed.pathname.replace(/\/$/, '')}/models`;
+    parsed.hash = '';
+    let finalUrl = parsed.toString();
+    if (apiType === 'gemini') {
+        finalUrl = mergeUrlQuery(finalUrl, { key: apiKey });
+    }
+    return finalUrl;
+}
+
 // 非流式一次性调用（用于 annotateConcepts 等需要完整 JSON 的场景）
 async function callLLMOnce(settings, messages, { temperature = 0.2, maxTokens = 1500 } = {}) {
-    const model = settings[`${settings.apiType}_model`];
-    const apiKey = settings[`${settings.apiType}_apiKey`];
-    const apiBase = settings[`${settings.apiType}_apiBase`];
+    const apiType = normalizeApiType(settings.apiType);
+    const model = getApiSetting(settings, 'model');
+    const apiKey = getApiSetting(settings, 'apiKey');
+    const apiBase = getApiSetting(settings, 'apiBase');
+    const apiPath = getApiSetting(settings, 'apiPath');
 
     if (!apiBase?.trim()) throw new Error('请先在设置页填写请求URL');
     if (!model?.trim()) throw new Error('请先在设置页填写AI模型');
-    if ((settings.apiType === 'custom' || settings.apiType === 'anthropic') && !apiKey?.trim()) {
+    if (apiRequiresKey(apiType) && !apiKey?.trim()) {
         throw new Error('请先在设置页填写API密钥');
     }
 
     let body;
-    if (settings.apiType === 'ollama') {
-        body = { model, messages: messages.map(stripInternalFields), stream: false, options: { temperature, num_predict: maxTokens } };
-    } else if (settings.apiType === 'anthropic') {
-        body = buildAnthropicBody({ ...settings, maxTokens, temperature }, model, messages, false);
+    const requestSettings = { ...settings, apiType, maxTokens, temperature };
+    if (apiType === 'ollama') {
+        body = { model, messages: messages.map(buildOllamaMessage), stream: false, options: { temperature, num_predict: maxTokens } };
+    } else if (apiType === 'claude') {
+        body = buildAnthropicBody(requestSettings, model, messages, false);
+    } else if (apiType === 'responses') {
+        body = buildResponsesBody(requestSettings, model, messages, false);
+    } else if (apiType === 'gemini') {
+        body = buildGeminiBody(requestSettings, messages);
     } else {
-        body = { model, messages: messages.map(stripInternalFields), max_tokens: maxTokens, temperature, stream: false };
+        body = { model, messages: messages.map(buildOpenAIMessage), max_tokens: maxTokens, temperature, stream: false };
     }
 
-    const headers = buildRequestHeaders(settings, apiKey);
+    const headers = buildRequestHeaders(requestSettings, apiKey);
+    const finalUrl = buildEndpointUrl(apiType, apiBase, apiPath, model, apiKey);
 
-    const response = await fetch(apiBase, {
+    const response = await fetch(finalUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(body)
@@ -1281,19 +1660,12 @@ async function callLLMOnce(settings, messages, { temperature = 0.2, maxTokens = 
         throw new Error(`LLM 请求失败: ${response.status} ${errText.slice(0, 200)}`);
     }
     const data = await response.json();
-    if (settings.apiType === 'ollama') {
-        return data.message?.content || '';
-    }
-    if (settings.apiType === 'anthropic') {
-        // Anthropic: content 是 content blocks 数组
-        return (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('') || '';
-    }
-    return data.choices?.[0]?.message?.content || '';
+    return extractContentFromResponse(apiType, data);
 }
 
 async function annotateConcepts(pageContent, pageTitle) {
     try {
-        const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+        const settings = await loadSettings();
         const text = (pageContent || '').trim();
         if (!text) {
             return { status: 'error', error: '页面没有可分析的正文' };
@@ -1353,6 +1725,147 @@ async function annotateConcepts(pageContent, pageTitle) {
     } catch (error) {
         console.error('annotateConcepts 失败:', error);
         return { status: 'error', error: error.message };
+    }
+}
+
+async function fetchApiModels(config) {
+    try {
+        const apiType = normalizeApiType(config.apiType);
+        const apiKey = String(config.apiKey || '').trim();
+        const apiBase = String(config.apiBase || '').trim() || DEFAULT_SETTINGS[`${apiType}_apiBase`] || '';
+        if (apiRequiresKey(apiType) && !apiKey) {
+            throw new Error('API密钥是必填项');
+        }
+        const url = buildModelsUrl(apiType, apiBase, apiKey);
+        const headers = buildRequestHeaders({ apiType }, apiKey);
+        delete headers['Content-Type'];
+
+        const response = await fetch(url, { method: 'GET', headers });
+        const raw = await response.text();
+        const data = parseJsonResponse(raw);
+        if (!response.ok) {
+            throw new Error(extractApiErrorMessage(data, raw) || `HTTP ${response.status}`);
+        }
+
+        const models = extractModelsFromResponse(apiType, data);
+        return {
+            status: 'ok',
+            models,
+            count: models.length,
+            finalUrl: redactUrlKey(url)
+        };
+    } catch (error) {
+        return { status: 'error', error: error.message };
+    }
+}
+
+async function testApiConfigFromBackground(config) {
+    try {
+        const apiType = normalizeApiType(config.apiType);
+        const apiKey = String(config.apiKey || '').trim();
+        const apiBase = String(config.apiBase || '').trim() || DEFAULT_SETTINGS[`${apiType}_apiBase`] || '';
+        const apiPath = String(config.apiPath || '').trim() || DEFAULT_SETTINGS[`${apiType}_apiPath`] || '';
+        const model = String(config.model || '').trim();
+        if (!apiBase) throw new Error('请求URL是必填项');
+        if (!model) throw new Error('AI模型是必填项');
+        if (apiRequiresKey(apiType) && !apiKey) throw new Error('API密钥是必填项');
+
+        const settings = {
+            apiType,
+            maxTokens: 64,
+            temperature: 0,
+            [`${apiType}_apiKey`]: apiKey,
+            [`${apiType}_apiBase`]: apiBase,
+            [`${apiType}_apiPath`]: apiPath,
+            [`${apiType}_model`]: model
+        };
+        const messages = [{ role: 'user', content: 'Reply exactly: OK' }];
+        const body = buildRequestBody(settings, model, messages);
+        if (apiType !== 'ollama' && apiType !== 'gemini') {
+            body.stream = false;
+        }
+        const url = buildEndpointUrl(apiType, apiBase, apiPath, model, apiKey);
+        const headers = buildRequestHeaders(settings, apiKey);
+        const started = Date.now();
+        const response = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+        });
+        const elapsedMs = Date.now() - started;
+        const raw = await response.text();
+        const data = parseJsonResponse(raw);
+
+        if (!response.ok) {
+            throw new Error(extractApiErrorMessage(data, raw) || `HTTP ${response.status}`);
+        }
+
+        const text = extractContentFromResponse(apiType, data);
+        if (!text.trim()) {
+            throw new Error('响应成功，但没有返回文本内容');
+        }
+
+        return {
+            status: 'ok',
+            httpStatus: response.status,
+            elapsedMs,
+            finalUrl: redactUrlKey(url),
+            returnedModel: data.model || data.modelVersion || ''
+        };
+    } catch (error) {
+        return { status: 'error', error: error.message };
+    }
+}
+
+function parseJsonResponse(raw) {
+    try {
+        return JSON.parse(raw);
+    } catch (error) {
+        return { raw };
+    }
+}
+
+function extractApiErrorMessage(data, raw) {
+    const error = data?.error || data;
+    if (error && typeof error === 'object') {
+        return error.message || error.code || JSON.stringify(error).slice(0, 300);
+    }
+    if (typeof error === 'string') return error.slice(0, 300);
+    return String(raw || '').slice(0, 300);
+}
+
+function extractModelsFromResponse(apiType, data) {
+    if (!data || typeof data !== 'object') return [];
+    if (apiType === 'ollama' && Array.isArray(data.models)) {
+        return data.models
+            .map((item) => item?.name || item?.model)
+            .filter((name) => typeof name === 'string' && name);
+    }
+    if (Array.isArray(data.data)) {
+        const ids = data.data
+            .map((item) => item?.id)
+            .filter((id) => typeof id === 'string' && id);
+        if (ids.length) return ids.sort();
+    }
+    if (Array.isArray(data.models)) {
+        return data.models
+            .map((item) => item?.name || item?.id)
+            .filter((name) => typeof name === 'string' && name)
+            .map((name) => name.replace(/^models\//, ''))
+            .sort();
+    }
+    return [];
+}
+
+function redactUrlKey(url) {
+    try {
+        const parsed = new URL(url);
+        if (parsed.searchParams.has('key')) {
+            parsed.searchParams.set('key', '***');
+        }
+        return parsed.toString();
+    } catch (error) {
+        return url;
     }
 }
 
@@ -1710,14 +2223,51 @@ function createIdleGeneratingState() {
     };
 }
 
-function createMessage(content, isUser, turnId = '') {
+function createMessage(content, isUser, turnId = '', attachments = []) {
     return {
         turnId,
         content,
         markdownContent: content,
+        attachments: normalizeImageAttachments(attachments),
         isUser,
         createdAt: new Date().toISOString()
     };
+}
+
+function normalizeImageAttachments(attachments) {
+    if (!Array.isArray(attachments)) return [];
+    const out = [];
+
+    for (const attachment of attachments) {
+        if (!attachment || typeof attachment.dataUrl !== 'string') continue;
+        if (attachment.dataUrl.length > MAX_IMAGE_DATA_URL_LENGTH) continue;
+
+        const mimeType = attachment.mimeType || mimeTypeFromDataUrl(attachment.dataUrl);
+        if (!/^image\/(png|jpe?g|webp|gif)$/i.test(mimeType)) continue;
+        if (!attachment.dataUrl.startsWith(`data:${mimeType};base64,`)) continue;
+
+        out.push({
+            id: String(attachment.id || `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+            name: String(attachment.name || 'image'),
+            mimeType,
+            dataUrl: attachment.dataUrl,
+            size: Number(attachment.size) || 0
+        });
+
+        if (out.length >= MAX_IMAGE_ATTACHMENTS) break;
+    }
+
+    return out;
+}
+
+function mimeTypeFromDataUrl(dataUrl) {
+    const match = String(dataUrl || '').match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,/);
+    return match ? match[1] : '';
+}
+
+function imageBase64FromDataUrl(dataUrl) {
+    const index = String(dataUrl || '').indexOf(',');
+    return index >= 0 ? dataUrl.slice(index + 1) : '';
 }
 
 function getTurnById(session, turnId) {
@@ -1777,17 +2327,59 @@ function processStreamLine(apiType, rawLine) {
 }
 
 function extractContentFromChunk(apiType, parsed) {
+    apiType = normalizeApiType(apiType);
     if (apiType === 'ollama') {
         return parsed.message?.content || '';
     }
-    if (apiType === 'anthropic') {
+    if (apiType === 'claude') {
         // 只关心 content_block_delta 里的 text_delta
         if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
             return parsed.delta.text || '';
         }
         return '';
     }
+    if (apiType === 'responses') {
+        if (parsed.type === 'response.output_text.delta') return parsed.delta || '';
+        if (parsed.type === 'response.output_text.done') return '';
+        return '';
+    }
     return parsed.choices?.[0]?.delta?.content || '';
+}
+
+function extractContentFromResponse(apiType, parsed) {
+    apiType = normalizeApiType(apiType);
+    if (!parsed || typeof parsed !== 'object') return '';
+    if (apiType === 'ollama') {
+        return parsed.message?.content || '';
+    }
+    if (apiType === 'claude') {
+        return (parsed.content || [])
+            .filter((block) => block && block.type === 'text')
+            .map((block) => block.text || '')
+            .join('');
+    }
+    if (apiType === 'responses') {
+        if (typeof parsed.output_text === 'string') return parsed.output_text;
+        const chunks = [];
+        for (const item of parsed.output || []) {
+            if (!item || typeof item !== 'object') continue;
+            for (const part of item.content || []) {
+                if (part && typeof part.text === 'string') chunks.push(part.text);
+            }
+        }
+        return chunks.join('');
+    }
+    if (apiType === 'gemini') {
+        const chunks = [];
+        for (const candidate of parsed.candidates || []) {
+            const parts = candidate?.content?.parts || [];
+            for (const part of parts) {
+                if (typeof part?.text === 'string') chunks.push(part.text);
+            }
+        }
+        return chunks.join('');
+    }
+    return parsed.choices?.[0]?.message?.content || '';
 }
 
 function extractHostname(rawUrl) {
@@ -1800,6 +2392,24 @@ function extractHostname(rawUrl) {
 
 function buildPageContentExcerpt(pageContent = '') {
     return pageContent.replace(/\s+/g, ' ').trim().slice(0, 1500);
+}
+
+function buildVideoContextKey(rawUrl = '', pageContent = '') {
+    const contentUrl = String(pageContent || '').match(/^- URL:\s*(.+)$/m)?.[1]?.trim() || '';
+    const sourceUrl = contentUrl || rawUrl;
+    try {
+        const url = new URL(sourceUrl);
+        const path = url.pathname || '';
+        const bvid = path.match(/\/video\/([Bb][Vv][0-9A-Za-z]+)/)?.[1] || '';
+        const epId = path.match(/\/bangumi\/play\/(ep\d+)/i)?.[1] || '';
+        const page = url.searchParams.get('p') || '';
+        if (bvid) return `bilibili:${bvid}${page ? `:p${page}` : ''}`;
+        if (epId) return `bilibili:${epId}`;
+        return `video:${url.origin}${path}`;
+    } catch (_) {
+        const title = String(pageContent || '').match(/^- 标题:\s*(.+)$/m)?.[1]?.trim() || '';
+        return title ? `video-title:${title}` : '';
+    }
 }
 
 function createSessionId(pageTitle) {
@@ -1834,15 +2444,18 @@ function isReservationExpired(reservation) {
 function modeUsesPageContext(chatMode) {
     return chatMode === CHAT_MODES.WEB_PERSISTED
         || chatMode === CHAT_MODES.WEB_EPHEMERAL
-        || chatMode === CHAT_MODES.WEB_SELECTION;
+        || chatMode === CHAT_MODES.VIDEO_PERSISTED
+        || chatMode === CHAT_MODES.VIDEO_EPHEMERAL;
 }
 
-function modeIsSelectionOnly(chatMode) {
-    return chatMode === CHAT_MODES.WEB_SELECTION;
+function modeIsVideoContext(chatMode) {
+    return chatMode === CHAT_MODES.VIDEO_PERSISTED || chatMode === CHAT_MODES.VIDEO_EPHEMERAL;
 }
 
 function modeShouldPersist(chatMode) {
-    return chatMode === CHAT_MODES.WEB_PERSISTED || chatMode === CHAT_MODES.CHAT_PERSISTED;
+    return chatMode === CHAT_MODES.WEB_PERSISTED
+        || chatMode === CHAT_MODES.VIDEO_PERSISTED
+        || chatMode === CHAT_MODES.CHAT_PERSISTED;
 }
 
 function getRotationReason(session, tabInfo, settings, forQuestion) {
@@ -1859,7 +2472,7 @@ async function rotateSessionIfNeeded(tabId, forQuestion) {
         return null;
     }
 
-    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const settings = await loadSettings();
     const tabInfo = await getTabSnapshot(tabId);
     const rotationReason = getRotationReason(session, tabInfo, settings, forQuestion);
 
@@ -1935,7 +2548,7 @@ async function finalizeAndClearSession(tabId, reason) {
         return;
     }
 
-    const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const settings = await loadSettings();
     session.sessionMeta.isFinalizing = true;
 
     if (session.generatingState.isGenerating) {
@@ -1983,7 +2596,7 @@ async function persistSessionLog(tabId, reason, providedSettings = null) {
         return;
     }
 
-    const settings = providedSettings || await chrome.storage.sync.get(DEFAULT_SETTINGS);
+    const settings = providedSettings || await loadSettings();
     if (!settings.enableSessionLogging) {
         return;
     }
@@ -2124,7 +2737,7 @@ function buildLogPayload(session, reason, settings) {
             preambleChain,
             assistant: {
                 apiType: settings.apiType,
-                model: settings[`${settings.apiType}_model`],
+                model: getApiSetting(settings, 'model'),
                 temperature: settings.temperature,
                 maxTokens: settings.maxTokens,
                 enableContext: settings.enableContext,
