@@ -131,7 +131,11 @@
         };
 
         if (urlBvid && stateBvid && urlBvid !== stateBvid) {
-            return buildNoTranscriptContext(baseContext, '页面脚本中的 cid 不是当前视频，请刷新页面后重试。');
+            // SPA 跳转：页面脚本里仍是上一个视频的 aid/cid，丢弃后按 URL 上的 bvid 走 API 重取。
+            bvid = urlBvid;
+            stateBvid = '';
+            aid = '';
+            cid = '';
         }
 
         if (!cid || (!bvid && !aid)) {
@@ -154,9 +158,13 @@
         }
 
         try {
-            const subtitles = await fetchBilibiliSubtitleTracks({ bvid, aid, cid });
+            const probe = await fetchBilibiliSubtitleTracks({ bvid, aid, cid });
+            const subtitles = probe.tracks;
             if (!subtitles.length) {
-                return buildNoTranscriptContext(baseContext, '未找到可读取字幕。');
+                const detail = probe.diagnostics.length
+                    ? `未找到可读取字幕。诊断：${probe.diagnostics.join(' | ')}`
+                    : '未找到可读取字幕。';
+                return buildNoTranscriptContext(baseContext, detail);
             }
 
             const subtitle = selectPreferredTrack(subtitles, (item) => ({
@@ -192,17 +200,20 @@
     }
 
     async function fetchBilibiliSubtitleTracks({ bvid, aid, cid }) {
+        const diagnostics = [];
         const localTracks = findBilibiliSubtitleTracksFromPage();
-        if (localTracks.length) return localTracks;
+        if (localTracks.length) return { tracks: localTracks, diagnostics };
+        diagnostics.push('页面脚本未携带字幕');
 
         try {
             const wbiPlayerUrl = buildBilibiliWbiPlayerUrl({ bvid, aid, cid });
             const wbiPlayerText = await fetchTextViaBackground(wbiPlayerUrl, 'include');
             const wbiPlayerJson = JSON.parse(wbiPlayerText);
             const wbiPlayerTracks = normalizeBilibiliSubtitleTracks(wbiPlayerJson.data?.subtitle);
-            if (wbiPlayerTracks.length) return wbiPlayerTracks;
-        } catch (_) {
-            // 继续尝试旧播放器接口。
+            if (wbiPlayerTracks.length) return { tracks: wbiPlayerTracks, diagnostics };
+            diagnostics.push(`wbi/v2 code=${wbiPlayerJson.code} msg=${oneLine(String(wbiPlayerJson.message || ''))} subtitles=${wbiPlayerJson.data?.subtitle?.subtitles?.length ?? 0}`);
+        } catch (error) {
+            diagnostics.push(`wbi/v2 请求异常:${error.message || error}`);
         }
 
         try {
@@ -210,22 +221,22 @@
             const playerText = await fetchTextViaBackground(playerUrl, 'include');
             const playerJson = JSON.parse(playerText);
             const playerTracks = normalizeBilibiliSubtitleTracks(playerJson.data?.subtitle);
-            if (playerTracks.length) return playerTracks;
-        } catch (_) {
-            // 继续尝试 ACG助手同款备用接口。
+            if (playerTracks.length) return { tracks: playerTracks, diagnostics };
+            diagnostics.push(`player/v2 code=${playerJson.code} msg=${oneLine(String(playerJson.message || ''))} subtitles=${playerJson.data?.subtitle?.subtitles?.length ?? 0}`);
+        } catch (error) {
+            diagnostics.push(`player/v2 请求异常:${error.message || error}`);
         }
 
-        // ACG助手兼容路径：部分页面在 x/player/v2 没返回字幕时，
-        // x/web-interface/view?aid=...&cid=... 仍会带 subtitle 数组。
         if (aid && cid) {
             try {
                 const viewUrl = buildBilibiliViewUrl({ aid, cid });
                 const viewText = await fetchTextViaBackground(viewUrl, 'include');
                 const viewJson = JSON.parse(viewText);
                 const viewTracks = normalizeBilibiliSubtitleTracks(viewJson.data?.subtitle);
-                if (viewTracks.length) return viewTracks;
-            } catch (_) {
-                // 由调用方统一返回“未找到字幕”。
+                if (viewTracks.length) return { tracks: viewTracks, diagnostics };
+                diagnostics.push(`view code=${viewJson.code} msg=${oneLine(String(viewJson.message || ''))}`);
+            } catch (error) {
+                diagnostics.push(`view 请求异常:${error.message || error}`);
             }
         }
 
@@ -239,13 +250,14 @@
                     detailJson.data?.subtitle,
                     detailJson.result?.subtitle
                 ]);
-                if (detailTracks.length) return detailTracks;
-            } catch (_) {
-                // 由调用方统一返回“未找到字幕”。
+                if (detailTracks.length) return { tracks: detailTracks, diagnostics };
+                diagnostics.push(`view/detail code=${detailJson.code} msg=${oneLine(String(detailJson.message || ''))}`);
+            } catch (error) {
+                diagnostics.push(`view/detail 请求异常:${error.message || error}`);
             }
         }
 
-        return [];
+        return { tracks: [], diagnostics };
     }
 
     async function fetchBilibiliVideoDetail({ bvid, aid }) {

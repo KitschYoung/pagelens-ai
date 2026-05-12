@@ -51,6 +51,8 @@
                 "shared/chatModes.js",
                 "shared/mentorModes.js",
                 "shared/slashCommands.js",
+                "shared/skills.js",
+                "shared/skills/guizangPpt.js",
                 "shared/pdfParser.js",
                 "shared/videoContext.js",
                 "shared/imageInput.js",

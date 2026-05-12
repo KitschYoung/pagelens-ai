@@ -28,6 +28,143 @@ function safeLocalStorageGet(defaults, cb) {
 
 // PDF 优先：当前 tab 是 PDF 时走 pdf.js 抽文本；其它情况走 HTML 解析。
 // 视频模式使用 getVideoPageContextContent() 单独组合字幕和网页文本。
+// 从 <img> 上挑出"真实 URL"。很多站点（微信公众号 / 小红书 / Medium 等）会在
+// 未滚到视口前把 src 设成 data: 占位符，真实地址藏在 data-src / srcset / <picture>。
+function pickBestImgSrc(img) {
+    const isUsable = (s) => s && !s.startsWith('data:') && !s.startsWith('blob:');
+
+    // 1) currentSrc / src
+    if (isUsable(img.currentSrc)) return img.currentSrc;
+    if (isUsable(img.src)) return img.src;
+
+    // 2) 常见懒加载属性
+    const LAZY_ATTRS = [
+        'data-src', 'data-original', 'data-lazy-src', 'data-lazy',
+        'data-actualsrc', 'data-echo', 'data-image-src', 'data-source'
+    ];
+    for (const attr of LAZY_ATTRS) {
+        const v = img.getAttribute(attr);
+        if (isUsable(v)) return v;
+    }
+
+    // 3) srcset / data-srcset：取第一个非占位 URL
+    const pickFromSrcset = (raw) => {
+        if (!raw) return '';
+        for (const part of raw.split(',')) {
+            const url = part.trim().split(/\s+/)[0];
+            if (isUsable(url)) return url;
+        }
+        return '';
+    };
+    const fromSrcset = pickFromSrcset(img.getAttribute('srcset'))
+        || pickFromSrcset(img.getAttribute('data-srcset'));
+    if (fromSrcset) return fromSrcset;
+
+    // 4) <picture><source srcset="..."> 兜底
+    const picture = img.closest('picture');
+    if (picture) {
+        for (const source of picture.querySelectorAll('source')) {
+            const url = pickFromSrcset(source.getAttribute('srcset'))
+                || pickFromSrcset(source.getAttribute('data-srcset'));
+            if (url) return url;
+        }
+    }
+
+    return '';
+}
+
+// 从当前页面抽取可用的 <img> 列表（URL + alt + 邻近标题 + 尺寸）。
+// 只在 skill.wantsImages 时调用，避免给所有对话注入额外 tokens。
+function collectPageImages({ maxCount = 30, minSide = 120 } = {}) {
+    const out = [];
+    const seen = new Set();
+    let imgs;
+    try { imgs = Array.from(document.querySelectorAll('img')); }
+    catch (_) { return out; }
+
+    for (const img of imgs) {
+        if (!img || !img.isConnected) continue;
+        // 跳过 PageLens AI 自己的 UI（避免把扩展自己渲染的图标也喂给模型）
+        if (img.closest('#ai-assistant-dialog, .ball-container, .extension-notification')) continue;
+
+        let src = pickBestImgSrc(img);
+        if (!src) continue;
+        try { src = new URL(src, document.baseURI).href; } catch (_) { continue; }
+        if (seen.has(src)) continue;
+
+        const w = img.naturalWidth || img.width || 0;
+        const h = img.naturalHeight || img.height || 0;
+        // 用尺寸过滤明显的 icon / 像素追踪图；naturalWidth 为 0 通常意味着没加载完，先放过
+        if (w && h && Math.min(w, h) < minSide) continue;
+
+        // 可见性检查：display:none / visibility:hidden 一律跳过
+        try {
+            const cs = window.getComputedStyle(img);
+            if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) continue;
+        } catch (_) { /* SVG / detached node 等 */ }
+
+        // 找邻近 heading：先看自己的祖先里有没有，再向 previousSibling 链路找
+        let heading = '';
+        let p = img;
+        for (let depth = 0; depth < 6 && p && !heading; depth++) {
+            let sib = p.previousElementSibling;
+            while (sib && !heading) {
+                if (sib.matches?.('h1, h2, h3, h4, h5, h6')) {
+                    heading = (sib.textContent || '').trim();
+                    break;
+                }
+                const inner = sib.querySelector?.('h1, h2, h3, h4, h5, h6');
+                if (inner) {
+                    heading = (inner.textContent || '').trim();
+                    break;
+                }
+                sib = sib.previousElementSibling;
+            }
+            p = p.parentElement;
+        }
+
+        const fig = img.closest('figure');
+        const caption = (fig?.querySelector('figcaption')?.textContent || '').trim();
+
+        out.push({
+            src,
+            alt: (img.alt || '').trim().slice(0, 200),
+            caption: caption.slice(0, 200),
+            heading: heading.slice(0, 120),
+            width: w || null,
+            height: h || null
+        });
+        seen.add(src);
+        if (out.length >= maxCount) break;
+    }
+    return out;
+}
+
+// 把图片清单格式化成一段附在 pageContent 末尾的 Markdown 区块。
+// 模型从这里读取后可以直接 `<img src="..." alt="...">` 嵌入到生成的 HTML 里。
+function formatImageInventoryMarkdown(images) {
+    if (!Array.isArray(images) || !images.length) return '';
+    const lines = [
+        '',
+        '---',
+        '',
+        '### AVAILABLE_IMAGES',
+        '',
+        '以下是从当前网页提取到的可直接引用的图片清单。生成 HTML 时按需用 `<img src="原始URL" alt="...">` 嵌入；不要伪造本地路径。'
+    ];
+    images.forEach((img, i) => {
+        const dims = (img.width && img.height) ? ` (${img.width}x${img.height})` : '';
+        const tagBits = [];
+        if (img.heading) tagBits.push(`heading="${img.heading.replace(/"/g, "'")}"`);
+        if (img.alt) tagBits.push(`alt="${img.alt.replace(/"/g, "'")}"`);
+        if (img.caption) tagBits.push(`caption="${img.caption.replace(/"/g, "'")}"`);
+        const tagStr = tagBits.length ? `\n   - ${tagBits.join(' | ')}` : '';
+        lines.push(`${i + 1}. ${img.src}${dims}${tagStr}`);
+    });
+    lines.push('');
+    return lines.join('\n');
+}
+
 async function getPageContextContent() {
     try {
         if (self.WebChatPdf && self.WebChatPdf.isPdfPage()) {
@@ -81,7 +218,7 @@ function parseWebContent() {
         'header', 'nav', 'footer', 'aside',
         '[role="navigation"]', '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
         '[aria-hidden="true"]',
-        '#ai-assistant-dialog', '#ai-assistant-ball', '#webchat-annot-tooltip',
+        '#ai-assistant-dialog', '#ai-assistant-ball', '#webchat-annot-tooltip', '#webchat-focus-bubble',
         '[id^="webchat-"]', '[id^="ai-assistant-"]',
         '.sidebar', '.site-nav', '.breadcrumb', '.breadcrumbs', '.pagination',
         '.table-of-contents', '.toc', '.edit-this-page', '.prev-next-footer'
@@ -180,6 +317,11 @@ let activeDialogSyncController = null;
 // 从 shared/chatModes.js 读取统一定义
 const { CHAT_MODE_META, CHAT_MODES, DEFAULT_CHAT_MODE, normalizeChatMode } = self.WebChatModes;
 
+// 模块级绑定：createDialog 里的抽屉点击和 initializeDialog 里的发送链路
+// 都通过这个槽位调 composePageContextForCurrentSkill。
+// initializeDialog 启动时会用一个能读到 currentChatMode/currentSkillId 的实现替换掉。
+let composePageContextForCurrentSkill = async () => ({ content: '', imageCount: 0, skillActive: false });
+
 // 创建对话框
 function createDialog() {
     // 先移除可能存在的旧对话框
@@ -213,6 +355,10 @@ function createDialog() {
                         <div class="mentor-toggle-wrap">
                             <button type="button" class="panel-mentor" id="mentorToggle" title="学习带教模式（苏格拉底式引导）" aria-pressed="false">🎓</button>
                             <div class="mentor-popover" id="mentorPopover" hidden role="menu" aria-label="选择带教风格"></div>
+                        </div>
+                        <div class="skill-toggle-wrap">
+                            <button type="button" class="panel-skill" id="skillToggle" title="选择内置 Skill（特定任务的专家系统提示词）" aria-pressed="false">🪄</button>
+                            <div class="skill-popover" id="skillPopover" hidden role="menu" aria-label="选择 Skill"></div>
                         </div>
                         <button type="button" class="panel-annotate" id="annotateToggle" title="识别并标注本页关键概念（点击开启/关闭）" aria-pressed="false">📍</button>
                         <button type="button" class="panel-page-content" id="pageContentToggle" title="查看提取到的网页正文">📄</button>
@@ -679,7 +825,7 @@ function createDialog() {
         placeholder.textContent = '正在提取页面正文…';
         pageContentDrawerBody.appendChild(placeholder);
 
-        const content = await getPageContextContent();
+        const { content, imageCount, skillActive } = await composePageContextForCurrentSkill();
         const charCount = content.length;
         const pre = document.createElement('pre');
         pre.style.cssText = 'white-space:pre-wrap;word-break:break-word;margin:0;font-size:12px;line-height:1.5;color:#374151;';
@@ -687,7 +833,16 @@ function createDialog() {
         pageContentDrawerBody.innerHTML = '';
         const stats = document.createElement('div');
         stats.style.cssText = 'font-size:11px;color:#9ca3af;margin-bottom:6px;';
-        stats.textContent = `${charCount.toLocaleString()} 字符`;
+        const skill = SkillsAPI?.getSkill?.(currentSkillId);
+        const wantsImages = !!skill?.wantsImages;
+        const statBits = [`${charCount.toLocaleString()} 字符`];
+        if (skillActive && wantsImages) {
+            statBits.push(`图片清单：${imageCount} 张`);
+        } else if (wantsImages) {
+            // skill 注册了 wantsImages 但当前没启用
+            statBits.push('（启用 Skill 后会附加图片清单）');
+        }
+        stats.textContent = statBits.join(' · ');
         pageContentDrawerBody.appendChild(stats);
         pageContentDrawerBody.appendChild(pre);
     }
@@ -707,7 +862,7 @@ function createDialog() {
     }
     if (pageContentCopy) {
         pageContentCopy.addEventListener('click', async () => {
-            const content = await getPageContextContent();
+            const { content } = await composePageContextForCurrentSkill();
             try {
                 await navigator.clipboard.writeText(content);
                 pageContentCopy.textContent = '✓';
@@ -1232,6 +1387,140 @@ async function initMarked() {
     }
 }
 
+// ===== 代码块工具条：复制 + 下载（按语言推断扩展名） =====
+const CODE_LANG_TO_EXT = {
+    html: 'html', htm: 'html', xml: 'xml', svg: 'svg',
+    css: 'css', scss: 'scss', less: 'less',
+    js: 'js', javascript: 'js', mjs: 'mjs',
+    ts: 'ts', typescript: 'ts',
+    jsx: 'jsx', tsx: 'tsx',
+    json: 'json', yaml: 'yaml', yml: 'yml', toml: 'toml',
+    md: 'md', markdown: 'md',
+    py: 'py', python: 'py',
+    sh: 'sh', bash: 'sh', shell: 'sh', zsh: 'sh',
+    rb: 'rb', ruby: 'rb',
+    go: 'go', golang: 'go',
+    rs: 'rs', rust: 'rs',
+    java: 'java', kt: 'kt', kotlin: 'kt',
+    c: 'c', cpp: 'cpp', cxx: 'cpp', h: 'h', hpp: 'hpp',
+    cs: 'cs', csharp: 'cs',
+    php: 'php', sql: 'sql',
+    swift: 'swift', dart: 'dart',
+    txt: 'txt', text: 'txt', plaintext: 'txt'
+};
+
+function inferCodeLang(codeEl) {
+    if (!codeEl || !codeEl.className) return '';
+    const m = codeEl.className.match(/language-([\w+-]+)/);
+    return m ? m[1].toLowerCase() : '';
+}
+
+function sanitizeFilenameBase(s) {
+    const cleaned = String(s || '')
+        .replace(/[\\/:*?"<>|\n\r\t]+/g, '_')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^[-_.]+|[-_.]+$/g, '')
+        .slice(0, 80);
+    return cleaned || 'snippet';
+}
+
+function downloadTextAsFile(text, filename, mime = 'text/plain;charset=utf-8') {
+    try {
+        const blob = new Blob([text], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (e) {
+        console.error('下载失败:', e);
+    }
+}
+
+async function copyTextToClipboard(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    } catch (e) {
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            const ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            return ok;
+        } catch (_) { return false; }
+    }
+}
+
+// 给 messageDiv 中的每个 <pre><code> 加复制 + 下载按钮。
+// 流式渲染会反复重设 innerHTML，所以这里**每次都重新生成**，不靠 idempotent 检查。
+function attachCodeBlockToolbars(container, baseName) {
+    if (!container) return;
+    const pres = container.querySelectorAll('pre');
+    pres.forEach((pre, idx) => {
+        const code = pre.querySelector('code');
+        if (!code) return;
+        if (pre.dataset.toolbarAttached === '1') return;
+
+        const lang = inferCodeLang(code);
+        const ext = CODE_LANG_TO_EXT[lang] || 'txt';
+        const mime = ext === 'html' ? 'text/html;charset=utf-8'
+            : ext === 'json' ? 'application/json;charset=utf-8'
+            : ext === 'svg' ? 'image/svg+xml;charset=utf-8'
+            : 'text/plain;charset=utf-8';
+
+        const bar = document.createElement('div');
+        bar.className = 'code-toolbar';
+
+        if (lang) {
+            const langTag = document.createElement('span');
+            langTag.className = 'code-toolbar-lang';
+            langTag.textContent = lang;
+            bar.appendChild(langTag);
+        }
+
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'code-toolbar-btn';
+        copyBtn.textContent = '复制';
+        copyBtn.title = '复制代码到剪贴板';
+        copyBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const ok = await copyTextToClipboard(code.textContent || '');
+            copyBtn.textContent = ok ? '✓ 已复制' : '复制失败';
+            setTimeout(() => { copyBtn.textContent = '复制'; }, 1500);
+        });
+        bar.appendChild(copyBtn);
+
+        const dlBtn = document.createElement('button');
+        dlBtn.type = 'button';
+        dlBtn.className = 'code-toolbar-btn';
+        dlBtn.textContent = '下载';
+        dlBtn.title = `保存为 .${ext} 文件`;
+        dlBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const text = code.textContent || '';
+            const safeBase = sanitizeFilenameBase(baseName);
+            const suffix = pres.length > 1 ? `-${idx + 1}` : '';
+            const filename = `${safeBase}${suffix}.${ext}`;
+            downloadTextAsFile(text, filename, mime);
+        });
+        bar.appendChild(dlBtn);
+
+        pre.appendChild(bar);
+        pre.dataset.toolbarAttached = '1';
+    });
+}
+
 // 修改错误处理和通知显示函数
 function showNotification(message) {
     // 移除可能存在的旧通知
@@ -1359,6 +1648,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             getVideoPageContextContent()
                 .then((content) => sendResponse({ content }))
                 .catch((e) => sendResponse({ content: '', error: String(e && e.message || e) }));
+        } else if (request.action === 'getPageImages') {
+            // popup.js 调用：拿当前页的图片清单（URL + alt + 邻近标题）
+            try {
+                const images = collectPageImages(request.options || {});
+                sendResponse({ images, inventoryMarkdown: formatImageInventoryMarkdown(images) });
+            } catch (e) {
+                sendResponse({ images: [], inventoryMarkdown: '', error: String(e && e.message || e) });
+            }
         } else if (request.action === 'getSelection') {
             const selection = window.getSelection ? window.getSelection().toString().trim() : '';
             sendResponse({ selection });
@@ -1390,6 +1687,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 void activeDialogSyncController.applyMentorFlavorUpdate(request.mentorFlavor, true);
             }
             sendResponse({ status: 'ok' });
+        } else if (request.action === 'skillUpdated') {
+            if (activeDialogSyncController && activeDialogSyncController.tabId === request.tabId
+                && typeof activeDialogSyncController.applySkillUpdate === 'function') {
+                void activeDialogSyncController.applySkillUpdate(request.skillId, true);
+            }
+            sendResponse({ status: 'ok' });
         } else if (request.action === 'sessionReset') {
             // 后端因 URL 变化/刷新等清空了会话，前端在此刷新 UI
             if (activeDialogSyncController
@@ -1418,6 +1721,7 @@ async function initializeDialog(dialog) {
         const chatModeGroup = dialog.querySelector('#chatModeGroup');
         const chatModeButtons = chatModeGroup ? Array.from(chatModeGroup.querySelectorAll('.chat-mode-btn')) : [];
         const chatModeHint = dialog.querySelector('#chatModeHint');
+        const tokensCounter = dialog.querySelector('.tokens-counter');
         const imageInput = self.WebChatImageInput?.createImageInputController({
             container: dialog.querySelector('.input-container'),
             input: userInput,
@@ -1430,8 +1734,39 @@ async function initializeDialog(dialog) {
         const clientId = `dialog-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         let currentChatMode = 'web_persisted';
         let suppressModeSelect = false;
+        let totalTokens = 0;
         const MentorAPI = self.WebChatMentor || null;
         let currentMentorFlavor = MentorAPI ? MentorAPI.DEFAULT_MENTOR_FLAVOR : 'off';
+        const SkillsAPI = self.WebChatSkills || null;
+        let currentSkillId = SkillsAPI ? SkillsAPI.DEFAULT_SKILL_ID : 'off';
+
+        // 把模块级 composePageContextForCurrentSkill 替换成能读 currentChatMode /
+        // currentSkillId 的实现。createDialog 里的抽屉点击 + 这里的发送链路共享同一个槽位。
+        composePageContextForCurrentSkill = async function () {
+            const meta = CHAT_MODE_META[currentChatMode] || {};
+            let content = '';
+            if (meta.contextSource === 'full') {
+                content = await getPageContextContent();
+            } else if (meta.contextSource === 'video') {
+                content = await getVideoPageContextContent();
+            }
+            let imageCount = 0;
+            try {
+                const skill = SkillsAPI?.getSkill?.(currentSkillId);
+                if (skill?.wantsImages && content) {
+                    const images = collectPageImages();
+                    imageCount = images.length;
+                    const inventory = formatImageInventoryMarkdown(images);
+                    if (inventory) content += inventory;
+                }
+            } catch (e) {
+                console.warn('[PageLens AI] 图片清单注入失败:', e);
+            }
+            return { content, imageCount, skillActive: SkillsAPI?.isSkillActive?.(currentSkillId) || false };
+        };
+
+        // 代码块下载按钮使用的默认文件名前缀（取自页面标题）
+        const pageBaseName = sanitizeFilenameBase(document.title || 'pagelens');
 
         // 创建并添加滚动按钮
         const scrollToBottomButton = createScrollToBottomButton(messagesContainer);
@@ -1734,10 +2069,130 @@ async function initializeDialog(dialog) {
             });
         }
 
+        // ----- Skill 选择 UI -----
+        const skillToggle = dialog.querySelector('#skillToggle');
+        const skillPopover = dialog.querySelector('#skillPopover');
+
+        const skillOverrides = { labels: {} };
+        function refreshSkillOverrides(cb) {
+            try {
+                chrome.storage.sync.get({ skillLabels: {} }, ({ skillLabels }) => {
+                    skillOverrides.labels = skillLabels || {};
+                    if (cb) cb();
+                });
+            } catch (e) { /* context invalidated */ }
+        }
+
+        function skillLabelFor(id) {
+            return SkillsAPI && SkillsAPI.resolveSkillLabel
+                ? SkillsAPI.resolveSkillLabel(id, skillOverrides.labels)
+                : id;
+        }
+
+        function buildSkillPopover() {
+            if (!skillPopover || !SkillsAPI) return;
+            const skills = SkillsAPI.getAll();
+            skillPopover.innerHTML = skills.map((skill) => {
+                const active = skill.id === currentSkillId ? ' active' : '';
+                const label = skillLabelFor(skill.id);
+                const hint = skill.hint || skill.description || '';
+                return `<button type="button" class="skill-item${active}" data-skill="${skill.id}" role="menuitemradio" aria-checked="${skill.id === currentSkillId}">
+                    <span class="skill-item-icon">${skill.icon || '🛠️'}</span>
+                    <span class="skill-item-main">
+                        <span class="skill-item-label">${label}</span>
+                        <span class="skill-item-hint">${hint}</span>
+                    </span>
+                </button>`;
+            }).join('');
+        }
+
+        function updateSkillUI(id) {
+            if (!SkillsAPI || !skillToggle) return;
+            currentSkillId = SkillsAPI.normalizeSkillId(id);
+            const isOn = SkillsAPI.isSkillActive(currentSkillId);
+            skillToggle.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+            skillToggle.classList.toggle('active', isOn);
+            const skill = SkillsAPI.getSkill(currentSkillId);
+            const label = skillLabelFor(currentSkillId);
+            skillToggle.title = isOn
+                ? `Skill：${label}（点击切换）`
+                : '选择内置 Skill（特定任务的专家系统提示词）';
+            skillToggle.textContent = isOn ? (skill.icon || '🪄') : '🪄';
+            buildSkillPopover();
+        }
+
+        refreshSkillOverrides(() => buildSkillPopover());
+        try {
+            chrome.storage.onChanged.addListener((changes, area) => {
+                if (area !== 'sync' && area !== 'local') return;
+                if (changes.skillLabels) {
+                    refreshSkillOverrides(() => buildSkillPopover());
+                }
+            });
+        } catch (e) { /* context invalidated */ }
+
+        function hideSkillPopover() {
+            if (skillPopover) skillPopover.hidden = true;
+        }
+
+        async function applySkillUpdate(id, silent) {
+            const prev = currentSkillId;
+            updateSkillUI(id);
+            if (!silent && prev !== currentSkillId) {
+                if (!SkillsAPI.isSkillActive(currentSkillId)) {
+                    addMessage('已关闭 Skill。', false);
+                } else {
+                    const label = skillLabelFor(currentSkillId);
+                    const skill = SkillsAPI.getSkill(currentSkillId);
+                    addMessage(`已启用 Skill：${label}。${skill.description || ''}`, false);
+                }
+            }
+        }
+
+        if (skillToggle && skillPopover && SkillsAPI) {
+            buildSkillPopover();
+
+            skillToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                skillPopover.hidden = !skillPopover.hidden;
+            });
+
+            skillPopover.addEventListener('click', async (e) => {
+                const item = e.target.closest('.skill-item');
+                if (!item) return;
+                const id = item.dataset.skill;
+                hideSkillPopover();
+                if (id === currentSkillId) return;
+                try {
+                    const response = await sendMessageWithRetry({
+                        action: 'setSkill',
+                        tabId,
+                        skillId: id
+                    });
+                    if (!response || response.status !== 'ok') {
+                        throw new Error(response?.error || '切换 Skill 失败');
+                    }
+                    await applySkillUpdate(response.skillId, false);
+                } catch (error) {
+                    console.error('切换 Skill 失败:', error);
+                    addMessage('发生错误：' + error.message, false);
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!skillPopover.hidden
+                    && !skillPopover.contains(e.target)
+                    && e.target !== skillToggle) {
+                    hideSkillPopover();
+                }
+            });
+        }
+
         activeDialogSyncController = {
             tabId,
             applyChatModeUpdate,
             applyMentorFlavorUpdate,
+            applySkillUpdate,
             resetMessagesUI: () => resetMessagesUI(),
             // 后端因为 tab URL 变化等原因清空了会话，通知前端也把对话框 UI 重置
             performSessionReset: async (reason) => {
@@ -1776,6 +2231,7 @@ async function initializeDialog(dialog) {
 
                 updateChatModeUI(response?.chatMode || 'web_persisted');
                 updateMentorUI(response?.mentorFlavor);
+                updateSkillUI(response?.skillId);
                 messagesContainer.innerHTML = '';
 
                 if (!response || !response.history || response.history.length === 0) {
@@ -1791,6 +2247,7 @@ async function initializeDialog(dialog) {
                         try {
                             // 对所有消息使用Markdown渲染
                             messageDiv.innerHTML = markedInstance(msg.markdownContent || msg.content);
+                            attachCodeBlockToolbars(messageDiv, pageBaseName);
                             self.WebChatImageInput?.renderMessageAttachments(messageDiv, msg.attachments);
                             // 添加右键菜单事件监听
                             messageDiv.addEventListener('contextmenu', (e) => {
@@ -1820,6 +2277,7 @@ async function initializeDialog(dialog) {
                             try {
                                 messageDiv.dataset.markdownContent = streamAnswer;
                                 messageDiv.innerHTML = markedInstance(streamAnswer);
+                                attachCodeBlockToolbars(messageDiv, pageBaseName);
                             } catch (error) {
                                 messageDiv.textContent = streamAnswer;
                             }
@@ -1831,6 +2289,7 @@ async function initializeDialog(dialog) {
                                     streamAnswer += msg.content;
                                     messageDiv.dataset.markdownContent = msg.markdownContent || streamAnswer;
                                     messageDiv.innerHTML = markedInstance(streamAnswer);
+                                    attachCodeBlockToolbars(messageDiv, pageBaseName);
                                     autoScroll();
                                 } else if (msg.type === 'answer-end' || msg.type === 'answer-stopped') {
                                     if (msg.type === 'answer-stopped' && streamAnswer.trim()) {
@@ -2031,6 +2490,7 @@ async function initializeDialog(dialog) {
                 try {
                     // 无论是用户消息还是AI回复，都使用Markdown渲染
                     messageDiv.innerHTML = markedInstance(content);
+                    attachCodeBlockToolbars(messageDiv, pageBaseName);
                     messageDiv.addEventListener('contextmenu', (e) => {
                         const markdownContent = messageDiv.dataset.markdownContent;
                         handleContextMenu(e, messageDiv, markdownContent);
@@ -2080,13 +2540,8 @@ async function initializeDialog(dialog) {
             userInput.value = '';
 
             try {
-                const meta = CHAT_MODE_META[currentChatMode] || {};
-                let pageContent = '';
-                if (meta.contextSource === 'full') {
-                    pageContent = await getPageContextContent();
-                } else if (meta.contextSource === 'video') {
-                    pageContent = await getVideoPageContextContent();
-                }
+                // 用统一入口组装上下文（含 skill.wantsImages 的图片清单）
+                const { content: pageContent } = await composePageContextForCurrentSkill();
 
                 const prepare = await sendMessageWithRetry({
                     action: 'prepareGeneration',
@@ -2116,8 +2571,7 @@ async function initializeDialog(dialog) {
                 currentPort = chrome.runtime.connect({ name: "answerStream" });
                 let currentAnswer = '';
 
-                const tokensCounter = dialog.querySelector('.tokens-counter');
-                let totalTokens = 0;
+                totalTokens = 0;
 
                 // 修改消息监听器
                 currentPort.onMessage.addListener(async (msg) => {
@@ -2125,19 +2579,20 @@ async function initializeDialog(dialog) {
                         if (msg.type === 'input-tokens') {
                             // 更新输入Tokens计数
                             totalTokens += msg.tokens;
-                            tokensCounter.textContent = `Tokens: ${totalTokens}`;
+                            if (tokensCounter) tokensCounter.textContent = `Tokens: ${totalTokens}`;
                         } else if (msg.type === 'answer-chunk') {
                             currentAnswer += msg.content;
                             try {
                                 messageDiv.dataset.markdownContent = msg.markdownContent || currentAnswer;
                                 messageDiv.innerHTML = markedInstance(currentAnswer);
+                                attachCodeBlockToolbars(messageDiv, pageBaseName);
                             } catch (error) {
                                 messageDiv.textContent = currentAnswer;
                             }
                             // 更新输出Tokens计数
                             if (msg.tokens) {
                                 totalTokens += msg.tokens;
-                                tokensCounter.textContent = `Tokens: ${totalTokens}`;
+                                if (tokensCounter) tokensCounter.textContent = `Tokens: ${totalTokens}`;
                             }
                             autoScroll();
                         } else if (msg.type === 'answer-end' || msg.type === 'answer-stopped') {
@@ -2226,6 +2681,341 @@ async function initializeDialog(dialog) {
                 userInput.focus();
             }
         }
+
+        function setupFocusBubble() {
+            const FOCUS_THINK_DELAY_MS = 2500;
+            const FOCUS_REQUEST_COOLDOWN_MS = 90000;
+            const FOCUS_MIN_TEXT_LENGTH = 80;
+            const FOCUS_MAX_TEXT_LENGTH = 1500;
+            const FOCUS_SKIP_TAGS = new Set([
+                'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TEXTAREA', 'INPUT',
+                'SELECT', 'BUTTON', 'SVG', 'CANVAS', 'IFRAME', 'AUDIO', 'VIDEO'
+            ]);
+            const FOCUS_NOISE_SELECTOR = [
+                '#ai-assistant-dialog', '#ai-assistant-ball', '#webchat-focus-bubble',
+                '#webchat-annot-tooltip', '[id^="webchat-"]', '[id^="ai-assistant-"]',
+                'header', 'nav', 'footer', 'aside', '[role="navigation"]',
+                '[role="banner"]', '[role="contentinfo"]', '[role="complementary"]',
+                '.sidebar', '.site-nav', '.breadcrumb', '.breadcrumbs', '.pagination',
+                '.table-of-contents', '.toc', '.edit-this-page', '.prev-next-footer'
+            ].join(',');
+
+            let enabled = false;
+            let focusTimer = null;
+            let requestInFlight = false;
+            let lastRequestedHash = '';
+            let lastRequestAt = 0;
+            let currentQuestion = '';
+            let bubble = null;
+            let lastFocusStatus = { state: 'init' };
+
+            function setFocusStatus(state, detail = {}) {
+                lastFocusStatus = {
+                    state,
+                    ...detail,
+                    enabled,
+                    at: new Date().toISOString()
+                };
+                console.debug('[PageLens AI] focus-bubble', lastFocusStatus);
+            }
+
+            function normalizeFocusText(text) {
+                return String(text || '').replace(/\s+/g, ' ').trim();
+            }
+
+            function hashFocusText(text) {
+                let hash = 2166136261;
+                for (let i = 0; i < text.length; i += 1) {
+                    hash ^= text.charCodeAt(i);
+                    hash = Math.imul(hash, 16777619);
+                }
+                return String(hash >>> 0);
+            }
+
+            function isIgnoredFocusElement(el) {
+                if (!el || el.nodeType !== Node.ELEMENT_NODE) return true;
+                if (FOCUS_SKIP_TAGS.has(el.tagName)) return true;
+                if (el.closest(FOCUS_NOISE_SELECTOR)) return true;
+                if (el.isContentEditable || el.closest('[contenteditable="true"]')) return true;
+                const style = window.getComputedStyle(el);
+                if (!style || style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return true;
+                const rect = el.getBoundingClientRect();
+                return rect.width < 20 || rect.height < 12;
+            }
+
+            function getTextNodeRect(node) {
+                const range = document.createRange();
+                try {
+                    range.selectNodeContents(node);
+                    const rect = range.getBoundingClientRect();
+                    return rect && rect.width > 0 && rect.height > 0
+                        ? rect
+                        : node.parentElement?.getBoundingClientRect();
+                } finally {
+                    range.detach();
+                }
+            }
+
+            function rectIntersectsFocusBand(rect, top, bottom) {
+                if (!rect) return false;
+                if (rect.width < 5 || rect.height < 5) return false;
+                if (rect.bottom < 0 || rect.top > window.innerHeight) return false;
+                return rect.bottom >= top && rect.top <= bottom;
+            }
+
+            function sampleFocusText() {
+                const bandTop = window.innerHeight * 0.35;
+                const bandBottom = window.innerHeight * 0.65;
+                const centerY = window.innerHeight * 0.5;
+                const seen = new Set();
+                const candidates = [];
+
+                const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                    acceptNode(node) {
+                        const raw = node.nodeValue || '';
+                        if (!raw.trim()) return NodeFilter.FILTER_REJECT;
+                        const parent = node.parentElement;
+                        if (!parent || isIgnoredFocusElement(parent)) return NodeFilter.FILTER_REJECT;
+                        return NodeFilter.FILTER_ACCEPT;
+                    }
+                });
+
+                let node;
+                while ((node = walker.nextNode())) {
+                    const text = normalizeFocusText(node.nodeValue || '');
+                    if (text.length < 2 || seen.has(text)) continue;
+                    const rect = getTextNodeRect(node);
+                    if (!rectIntersectsFocusBand(rect, bandTop, bandBottom)) continue;
+                    seen.add(text);
+                    candidates.push({
+                        text,
+                        score: Math.abs((rect.top + rect.bottom) / 2 - centerY)
+                    });
+                }
+
+                candidates.sort((a, b) => a.score - b.score);
+                const chunks = candidates.map((item) => item.text);
+                const text = normalizeFocusText(chunks.join('\n\n'));
+                if (text.length < FOCUS_MIN_TEXT_LENGTH) return '';
+                return text.slice(0, FOCUS_MAX_TEXT_LENGTH);
+            }
+
+            function ensureFocusBubble() {
+                if (bubble) return bubble;
+                bubble = document.createElement('div');
+                bubble.id = 'webchat-focus-bubble';
+                bubble.hidden = true;
+                bubble.innerHTML = `
+                    <button type="button" class="focus-bubble-close" title="关闭">×</button>
+                    <button type="button" class="focus-bubble-question"></button>
+                `;
+                document.body.appendChild(bubble);
+
+                const close = bubble.querySelector('.focus-bubble-close');
+                const question = bubble.querySelector('.focus-bubble-question');
+                close.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    hideFocusBubble();
+                });
+                question.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    submitFocusQuestion();
+                });
+                return bubble;
+            }
+
+            function hideFocusBubble() {
+                if (bubble) bubble.hidden = true;
+                currentQuestion = '';
+            }
+
+            function positionFocusBubble() {
+                if (!bubble || bubble.hidden) return;
+                const ballContainer = document.querySelector('.ball-container');
+                if (!ballContainer) return;
+                const rect = ballContainer.getBoundingClientRect();
+                const gap = 10;
+                const maxLeft = Math.max(8, window.innerWidth - bubble.offsetWidth - 8);
+                const maxTop = Math.max(8, window.innerHeight - bubble.offsetHeight - 8);
+                let left;
+                let top;
+                let placement;
+
+                if (rect.top >= bubble.offsetHeight + gap + 8) {
+                    left = rect.right - bubble.offsetWidth;
+                    top = rect.top - bubble.offsetHeight - gap;
+                    placement = 'top';
+                } else if (window.innerHeight - rect.bottom >= bubble.offsetHeight + gap + 8) {
+                    left = rect.right - bubble.offsetWidth;
+                    top = rect.bottom + gap;
+                    placement = 'bottom';
+                } else if (rect.left >= bubble.offsetWidth + gap + 8) {
+                    left = rect.left - bubble.offsetWidth - gap;
+                    top = rect.top + rect.height / 2 - bubble.offsetHeight / 2;
+                    placement = 'left';
+                } else {
+                    left = rect.right + gap;
+                    top = rect.top + rect.height / 2 - bubble.offsetHeight / 2;
+                    placement = 'right';
+                }
+
+                bubble.dataset.placement = placement;
+                bubble.style.left = `${Math.max(8, Math.min(left, maxLeft))}px`;
+                bubble.style.top = `${Math.max(8, Math.min(top, maxTop))}px`;
+            }
+
+            function showFocusBubble(question) {
+                const el = ensureFocusBubble();
+                const questionEl = el.querySelector('.focus-bubble-question');
+                currentQuestion = question;
+                questionEl.textContent = question;
+                el.hidden = false;
+                requestAnimationFrame(positionFocusBubble);
+            }
+
+            async function submitFocusQuestion() {
+                const question = currentQuestion.trim();
+                if (!question || isGenerating) return;
+                hideFocusBubble();
+                dialog.classList.add('show');
+                userInput.value = question;
+                userInput.dispatchEvent(new Event('input'));
+                userInput.focus();
+                await handleUserInput();
+            }
+
+            function shouldPauseFocusBubble() {
+                if (!enabled) return 'disabled';
+                if (document.hidden) return 'document-hidden';
+                if (isGenerating) return 'generating';
+                if (dialog.classList.contains('show')) return 'dialog-open';
+                if (document.querySelector('.ball-container[data-dragging="true"]')) return 'ball-dragging';
+                return '';
+            }
+
+            function scheduleFocusCheck() {
+                if (focusTimer) clearTimeout(focusTimer);
+                const pauseReason = shouldPauseFocusBubble();
+                if (pauseReason) {
+                    setFocusStatus('paused', { reason: pauseReason });
+                    hideFocusBubble();
+                    return;
+                }
+                setFocusStatus('scheduled', { delayMs: FOCUS_THINK_DELAY_MS });
+                focusTimer = setTimeout(() => {
+                    void maybeGenerateFocusQuestion();
+                }, FOCUS_THINK_DELAY_MS);
+            }
+
+            async function maybeGenerateFocusQuestion() {
+                focusTimer = null;
+                const pauseReason = shouldPauseFocusBubble();
+                if (pauseReason) {
+                    setFocusStatus('paused-before-request', { reason: pauseReason });
+                    return;
+                }
+                if (requestInFlight) {
+                    setFocusStatus('skipped', { reason: 'request-in-flight' });
+                    return;
+                }
+
+                const text = sampleFocusText();
+                if (!text) {
+                    setFocusStatus('skipped', { reason: 'empty-focus-text' });
+                    hideFocusBubble();
+                    return;
+                }
+
+                const sourceHash = hashFocusText(text);
+                const now = Date.now();
+                if (sourceHash === lastRequestedHash) {
+                    setFocusStatus('skipped', { reason: 'same-focus-text', textLength: text.length });
+                    return;
+                }
+                if (now - lastRequestAt < FOCUS_REQUEST_COOLDOWN_MS) {
+                    setFocusStatus('skipped', {
+                        reason: 'cooldown',
+                        waitMs: FOCUS_REQUEST_COOLDOWN_MS - (now - lastRequestAt),
+                        textLength: text.length
+                    });
+                    return;
+                }
+
+                requestInFlight = true;
+                lastRequestedHash = sourceHash;
+                lastRequestAt = now;
+                setFocusStatus('requesting', { textLength: text.length });
+                try {
+                    const response = await sendMessageWithRetry({
+                        action: 'generateFocusQuestion',
+                        pageTitle: document.title || '',
+                        pageUrl: location.href,
+                        excerpt: text
+                    });
+                    const afterRequestPause = shouldPauseFocusBubble();
+                    if (afterRequestPause) {
+                        setFocusStatus('response-paused', { reason: afterRequestPause });
+                        return;
+                    }
+                    const question = normalizeFocusText(response?.question || '');
+                    if (!response || response.status !== 'ok' || !question) {
+                        setFocusStatus('response-empty', {
+                            status: response?.status || 'no-response',
+                            error: response?.error || '',
+                            textLength: text.length
+                        });
+                        return;
+                    }
+                    setFocusStatus('showing', { question });
+                    showFocusBubble(question);
+                } catch (error) {
+                    setFocusStatus('error', { error: error.message || String(error) });
+                    console.debug('[PageLens AI] 自动思考气泡生成失败:', error);
+                } finally {
+                    requestInFlight = false;
+                }
+            }
+
+            safeStorageGet({ enableFocusBubble: false }, (items) => {
+                enabled = Boolean(items.enableFocusBubble);
+                scheduleFocusCheck();
+            });
+
+            try {
+                chrome.storage.onChanged.addListener((changes, area) => {
+                    if (area !== 'sync' || !changes.enableFocusBubble) return;
+                    enabled = Boolean(changes.enableFocusBubble.newValue);
+                    scheduleFocusCheck();
+                });
+            } catch (e) { /* extension context invalidated */ }
+
+            window.addEventListener('scroll', scheduleFocusCheck, { passive: true });
+            window.addEventListener('resize', () => {
+                positionFocusBubble();
+                scheduleFocusCheck();
+            }, { passive: true });
+            const focusDialogObserver = new MutationObserver(() => {
+                scheduleFocusCheck();
+            });
+            focusDialogObserver.observe(dialog, { attributes: true, attributeFilter: ['class'] });
+            document.addEventListener('visibilitychange', scheduleFocusCheck);
+            document.addEventListener('mousemove', () => {
+                if (bubble && !bubble.hidden) positionFocusBubble();
+            }, { passive: true });
+
+            window.__webchatFocusBubbleDebug = () => ({
+                ...lastFocusStatus,
+                sampleLength: sampleFocusText().length,
+                dialogOpen: dialog.classList.contains('show'),
+                documentHidden: document.hidden,
+                requestInFlight,
+                lastRequestAt
+            });
+        }
+
+        setupFocusBubble();
 
         // 绑定事件
         askButton.addEventListener('click', handleUserInput);
@@ -2734,7 +3524,7 @@ async function initializeDialog(dialog) {
         // 从存储中加载Tokens计数
         safeStorageGet({ totalTokens: 0 }, (items) => {
             totalTokens = items.totalTokens;
-            tokensCounter.textContent = `Tokens: ${totalTokens}`;
+            if (tokensCounter) tokensCounter.textContent = `Tokens: ${totalTokens}`;
         });
 
         // 加载初始历史记录

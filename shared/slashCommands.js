@@ -24,7 +24,7 @@
         { name: 'deepdive',     title: '🔍 针对上一句深挖',      prompt: '请针对你上一条回答中**最关键**或**最不容易理解**的那一句话，深入讲清楚：包括 (1) 它的精确含义；(2) 为什么这么说；(3) 一个最小的具体例子；(4) 常见的误解。' },
         { name: 'rewrite',      title: '改写更清晰',             prompt: '请改写上述内容，让表达更清晰凝练，保留原意。' },
         { name: 'counter',      title: '反驳/质疑角度',          prompt: '请从另一个角度反驳/质疑上述内容，列出 3-5 条潜在问题或反例。' },
-        { name: 'greet',        title: 'BOSS 打招呼模板',         prompt: '请基于当前网页的岗位/JD信息，生成打招呼内容。', autoSubmit: true }
+        { name: 'greet',        title: 'BOSS 打招呼模板',         prompt: '请基于当前网页的岗位/JD 信息，结合"BOSS打招呼"带教模式 systemPrompt 里我的求职档案，生成打招呼内容。', autoSubmit: true }
     ];
 
     const AUTO_MERGE_DEFAULT_NAMES = ['greet'];

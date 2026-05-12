@@ -174,9 +174,14 @@ pagelens-workspace/
 webchat-session-logs/
 webchat-workspace/
 sample*.md
+.pagelens_log_bridge.pid
+.pagelens_log_bridge.log
 
 # Local scratch / experiments (contain personal keys or WIP code)
 temp.py
 main.py
 pyproject.toml
 .python-version
+
+# Graphify output cache (regeneratable, large)
+graphify-out/

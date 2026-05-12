@@ -54,7 +54,7 @@ const API_CONFIGS = {
 
 const FLOATING_ICON_MAX_BYTES = 5 * 1024 * 1024;
 const MAX_TOKENS_MIN = 128;
-const MAX_TOKENS_MAX = 32768;
+const MAX_TOKENS_MAX = 128000;
 const DEFAULT_FLOATING_ICON_SVG = `
     <svg class="icon" width="24" height="24" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
         <path d="M200 935.744a39.517867 39.517867 0 0 1-14.122667-7.185067c-12.906667-10.295467-18.602667-27.2896-14.741333-43.4688a1295.863467 1295.863467 0 0 0 17.207467-520c-5.6448-33.216 0.418133-66.760533 17.5488-96.443733 17.156267-29.563733 43.498667-51.648 75.656533-60.497067h0.008533l417.591467-114.24c66.0352-19.434667 144.533333 49.792 162.602667 156.258134a1978.666667 1978.666667 0 0 1 27.144533 397.806933c-3.4432 107.592533-71.6928 186.248533-139.758933 176.008533l-64.823467-8.494933c-22.203733-3.042133-36.8768-29.952-33.8944-60.1984 3.008-30.2336 22.664533-53.713067 45.038933-52.343467 21.7472 1.463467 43.485867 2.922667 65.233067 4.3776 24.170667 1.783467 45.969067-26.0096 47.133867-62.007466a1897.941333 1897.941333 0 0 0-26.030934-381.499734c-6.062933-35.618133-31.466667-60.3136-55.168-55.2576l-424.0128 87.466667c-11.4176 2.363733-21.1584 9.570133-27.6096 20.078933-6.4512 10.530133-8.802133 22.993067-6.698666 35.345067a1377.0368 1377.0368 0 0 1 2.346666 449.117867 1341.696 1341.696 0 0 0 118.4512-104.448c8.251733-8.1792 18.862933-12.475733 29.602134-11.758934l293.009066 19.6736c22.340267 1.365333 38.839467 28.650667 35.639467 60.842667-3.1744 32.200533-24.704 55.765333-46.882133 52.7232l-274.5216-35.972267c-62.229333 57.1136-127.6544 106.965333-194.973867 149.384534-9.629867 6.071467-20.8 7.522133-30.976 4.731733z" fill="white"></path>
@@ -511,7 +511,7 @@ async function saveOptions() {
 function loadOptions() {
     chrome.storage.sync.get({
         apiType: 'openai_chat',
-        maxTokens: 2048,
+        maxTokens: 8192,
         temperature: 0.7,
         openai_chat_apiKey: '',
         openai_chat_apiBase: API_CONFIGS.openai_chat.apiBase,
@@ -539,7 +539,8 @@ function loadOptions() {
         sessionLogEndpoint: 'http://127.0.0.1:8765/log-session',
         sessionLogOutputDir: '~/pagelens-session-logs',
         sessionLogWorkspaceRoot: '~/pagelens-workspace',
-        sessionIdleMinutes: 30
+        sessionIdleMinutes: 30,
+        enableFocusBubble: false
     }, (items) => {
         const apiType = normalizeApiType(items.apiType);
         document.getElementById('apiType').value = apiType;
@@ -566,7 +567,7 @@ function loadOptions() {
 // 在现有代码中添加默认设置常量
 const DEFAULT_SETTINGS = {
     apiType: 'openai_chat',
-    maxTokens: 2048,
+    maxTokens: 8192,
     temperature: 0.7,
     // 请在扩展设置页填写密钥与端点；此处默认值保持为空，避免泄露。
     openai_chat_apiKey: '',
@@ -599,8 +600,11 @@ const DEFAULT_SETTINGS = {
     sessionLogOutputDir: '',
     sessionLogWorkspaceRoot: '',
     sessionIdleMinutes: 30,
+    enableFocusBubble: false,
     mentorPrompts: {},
-    mentorLabels: {}
+    mentorLabels: {},
+    skillPrompts: {},
+    skillLabels: {}
 };
 
 // 修改还原设置函数
@@ -629,8 +633,9 @@ async function resetOptions() {
         document.getElementById('sessionLogOutputDir').value = DEFAULT_SETTINGS.sessionLogOutputDir;
         document.getElementById('sessionLogWorkspaceRoot').value = DEFAULT_SETTINGS.sessionLogWorkspaceRoot;
         document.getElementById('sessionIdleMinutes').value = DEFAULT_SETTINGS.sessionIdleMinutes;
+        document.getElementById('enableFocusBubble').checked = DEFAULT_SETTINGS.enableFocusBubble;
         document.getElementById('sessionLogSettings').style.display = 'block';
-        await chrome.storage.local.remove(['floatingIconDataUrl', 'mentorPrompts']);
+        await chrome.storage.local.remove(['floatingIconDataUrl', 'mentorPrompts', 'skillPrompts']);
         setFloatingIconPreview('');
         updateMaxTokensDisplay(DEFAULT_SETTINGS.maxTokens);
         updateTemperatureDisplay(DEFAULT_SETTINGS.temperature);
@@ -670,6 +675,13 @@ async function resetOptions() {
             initMentorPromptsEditor();
         }
 
+        // Skills 编辑器同样清空重渲染
+        const skContainer = document.getElementById('skillsContainer');
+        if (skContainer) {
+            skContainer.innerHTML = '';
+            initSkillsEditor();
+        }
+
         // 示成功提示
         showStatus('已还原并保存默认设置。注意：使用前请先配置必要的API信息并测试。', 'warning');
     } catch (error) {
@@ -692,6 +704,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const apiKeyInput = document.getElementById('apiKey');
     const autoHideDialog = document.getElementById('autoHideDialog');
     const enableContext = document.getElementById('enableContext');
+    const enableFocusBubble = document.getElementById('enableFocusBubble');
     const maxContextRounds = document.getElementById('maxContextRounds');
     const systemPrompt = document.getElementById('systemPrompt');
     const contextSettings = document.getElementById('contextSettings');
@@ -846,11 +859,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     chrome.storage.sync.get({
         autoHideDialog: true,
         enableContext: true,
+        enableFocusBubble: false,
         maxContextRounds: 5,
         systemPrompt: '你是一个帮助理解网页内容的AI助手。请使用Markdown格式回复。'
     }, (items) => {
         autoHideDialog.checked = items.autoHideDialog;
         enableContext.checked = items.enableContext;
+        enableFocusBubble.checked = items.enableFocusBubble;
         maxContextRounds.value = items.maxContextRounds;
         systemPrompt.value = items.systemPrompt;
         contextSettings.style.display = items.enableContext ? 'block' : 'none';
@@ -864,6 +879,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         const isEnabled = enableContext.checked;
         contextSettings.style.display = isEnabled ? 'block' : 'none';
         chrome.storage.sync.set({ enableContext: isEnabled });
+    });
+
+    enableFocusBubble.addEventListener('change', () => {
+        chrome.storage.sync.set({ enableFocusBubble: enableFocusBubble.checked });
     });
 
     maxContextRounds.addEventListener('change', () => {
@@ -968,6 +987,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // ===== 学习带教模式提示词编辑器 =====
     initMentorPromptsEditor();
+
+    // ===== 内置 Skills 编辑器 =====
+    initSkillsEditor();
 
     // ===== Slash 指令编辑器 =====
     initSlashCommandsEditor();
@@ -1205,6 +1227,210 @@ function initMentorPromptsEditor() {
         });
     }).catch((error) => {
         container.textContent = '带教提示词加载失败：' + error.message;
+    });
+}
+
+// ===== 内置 Skills 编辑器 =====
+async function loadSkillsEditorData() {
+    const [syncData, localData] = await Promise.all([
+        storageGet('sync', { skillLabels: {} }),
+        storageGet('local', { skillPrompts: null })
+    ]);
+    return {
+        skillPrompts: (localData.skillPrompts && typeof localData.skillPrompts === 'object')
+            ? localData.skillPrompts
+            : {},
+        skillLabels: syncData.skillLabels || {}
+    };
+}
+
+function initSkillsEditor() {
+    const container = document.getElementById('skillsContainer');
+    if (!container) return;
+    const SkillsAPI = self.WebChatSkills;
+    if (!SkillsAPI) {
+        container.textContent = '⚠️ Skills 模块未加载';
+        return;
+    }
+
+    if (container.__skillsFlusher) {
+        PENDING_FLUSHERS.delete(container.__skillsFlusher);
+        container.__skillsFlusher = null;
+    }
+
+    // 只展示非 OFF 的内置 skills
+    const skills = SkillsAPI.getAll().filter((s) => s.id !== SkillsAPI.SKILL_OFF);
+    if (!skills.length) {
+        container.innerHTML = '<p class="help-text">暂无内置 Skill。</p>';
+        return;
+    }
+
+    loadSkillsEditorData().then(({ skillPrompts, skillLabels }) => {
+        const promptOverrides = skillPrompts || {};
+        const labelOverrides = skillLabels || {};
+        const promptTimers = {};
+        const labelTimers = {};
+        const rowsById = {};
+
+        const flushPendingSkillEdits = async () => {
+            Object.keys(promptTimers).forEach((k) => { if (promptTimers[k]) { clearTimeout(promptTimers[k]); promptTimers[k] = null; } });
+            Object.keys(labelTimers).forEach((k) => { if (labelTimers[k]) { clearTimeout(labelTimers[k]); labelTimers[k] = null; } });
+
+            const [storedLocal, storedSync] = await Promise.all([
+                storageGet('local', { skillPrompts: null }),
+                storageGet('sync', { skillLabels: {} })
+            ]);
+            const nextPrompts = {
+                ...((storedLocal.skillPrompts && typeof storedLocal.skillPrompts === 'object')
+                    ? storedLocal.skillPrompts
+                    : {})
+            };
+            const nextLabels = { ...(storedSync.skillLabels || {}) };
+
+            Object.keys(rowsById).forEach((id) => {
+                const row = rowsById[id];
+                if (row.textarea) {
+                    const v = (row.textarea.value || '').trim();
+                    if (v) nextPrompts[id] = v; else delete nextPrompts[id];
+                }
+                if (row.labelInput) {
+                    const v = (row.labelInput.value || '').trim();
+                    if (v) nextLabels[id] = v; else delete nextLabels[id];
+                }
+            });
+
+            await Promise.all([
+                storageSet('local', { skillPrompts: nextPrompts }),
+                storageSet('sync', { skillLabels: nextLabels })
+            ]);
+        };
+        PENDING_FLUSHERS.add(flushPendingSkillEdits);
+        container.__skillsFlusher = flushPendingSkillEdits;
+
+        skills.forEach((skill) => {
+            const id = skill.id;
+            const currentValue = typeof promptOverrides[id] === 'string' ? promptOverrides[id] : '';
+            const isOverridden = Boolean(currentValue && currentValue.trim());
+            const currentLabel = typeof labelOverrides[id] === 'string' ? labelOverrides[id] : '';
+            const effectiveLabel = currentLabel.trim() || skill.label;
+
+            const wrap = document.createElement('details');
+            wrap.className = 'mentor-prompt-item';
+            wrap.open = isOverridden;
+
+            const summary = document.createElement('summary');
+            summary.innerHTML = `
+                <span class="mentor-prompt-icon">${skill.icon || '🪄'}</span>
+                <span class="mentor-prompt-label">${effectiveLabel}</span>
+                ${isOverridden ? '<span class="mentor-prompt-badge">已自定义</span>' : ''}
+                <span class="mentor-prompt-hint">${skill.description || ''}</span>
+            `;
+            wrap.appendChild(summary);
+
+            const body = document.createElement('div');
+            body.className = 'mentor-prompt-body';
+
+            const labelRow = document.createElement('div');
+            labelRow.className = 'mentor-label-row';
+            labelRow.innerHTML = `
+                <label>显示名称<span class="help-text" style="margin-left:8px;">留空使用默认（${skill.label}）</span></label>
+            `;
+            const labelInput = document.createElement('input');
+            labelInput.type = 'text';
+            labelInput.value = currentLabel;
+            labelInput.placeholder = skill.label;
+            labelRow.appendChild(labelInput);
+            body.appendChild(labelRow);
+
+            const promptLabel = document.createElement('label');
+            promptLabel.textContent = '系统提示词覆盖';
+            body.appendChild(promptLabel);
+
+            const promptHelp = document.createElement('div');
+            promptHelp.className = 'help-text';
+            promptHelp.innerHTML = `留空 → 使用内置默认（来自 <code>${skill.promptUrl || '内嵌字符串'}</code>）；填入文本 → 该文本作为这个 Skill 的系统提示词，覆盖默认。`;
+            body.appendChild(promptHelp);
+
+            const textarea = document.createElement('textarea');
+            textarea.rows = 8;
+            textarea.value = currentValue;
+            textarea.placeholder = '留空使用内置默认提示词';
+            body.appendChild(textarea);
+
+            const actions = document.createElement('div');
+            actions.className = 'mentor-prompt-actions';
+
+            const viewDefaultBtn = document.createElement('button');
+            viewDefaultBtn.type = 'button';
+            viewDefaultBtn.className = 'secondary-button';
+            viewDefaultBtn.textContent = '查看默认提示词';
+            viewDefaultBtn.addEventListener('click', async () => {
+                try {
+                    const text = await SkillsAPI.getDefaultSkillPrompt(id);
+                    if (!text) {
+                        showStatus('未能加载默认提示词', 'warning');
+                        return;
+                    }
+                    // 只读弹窗：用 prompt 太丑，这里直接打开新 tab 展示文本
+                    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+                    const url = URL.createObjectURL(blob);
+                    window.open(url, '_blank', 'noopener');
+                    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+                } catch (e) {
+                    showStatus('加载默认提示词失败：' + e.message, 'error');
+                }
+            });
+            actions.appendChild(viewDefaultBtn);
+
+            const clearBtn = document.createElement('button');
+            clearBtn.type = 'button';
+            clearBtn.className = 'secondary-button';
+            clearBtn.textContent = '清空覆盖';
+            clearBtn.addEventListener('click', () => {
+                textarea.value = '';
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+            actions.appendChild(clearBtn);
+
+            body.appendChild(actions);
+            wrap.appendChild(body);
+            container.appendChild(wrap);
+
+            rowsById[id] = { textarea, labelInput };
+
+            textarea.addEventListener('input', () => {
+                if (promptTimers[id]) clearTimeout(promptTimers[id]);
+                promptTimers[id] = setTimeout(async () => {
+                    try {
+                        const stored = await storageGet('local', { skillPrompts: null });
+                        const next = {
+                            ...((stored.skillPrompts && typeof stored.skillPrompts === 'object')
+                                ? stored.skillPrompts
+                                : {})
+                        };
+                        const v = (textarea.value || '').trim();
+                        if (v) next[id] = v; else delete next[id];
+                        await storageSet('local', { skillPrompts: next });
+                    } catch (error) {
+                        showStatus('Skill 提示词保存失败：' + error.message, 'error');
+                    }
+                }, 800);
+            });
+
+            labelInput.addEventListener('input', () => {
+                if (labelTimers[id]) clearTimeout(labelTimers[id]);
+                labelTimers[id] = setTimeout(() => {
+                    chrome.storage.sync.get({ skillLabels: {} }, ({ skillLabels }) => {
+                        const next = { ...(skillLabels || {}) };
+                        const v = (labelInput.value || '').trim();
+                        if (v) next[id] = v; else delete next[id];
+                        chrome.storage.sync.set({ skillLabels: next });
+                    });
+                }, 800);
+            });
+        });
+    }).catch((error) => {
+        container.textContent = 'Skills 加载失败：' + error.message;
     });
 }
 

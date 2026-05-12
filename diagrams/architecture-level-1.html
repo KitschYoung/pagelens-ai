@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>PageLens AI · 框架结构 · 第一层</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-mute: #8a8a8a;
+    --line: #e2e2dd;
+    --line-strong: #c9c9c1;
+    --paper: #ffffff;
+    --accent: #2563eb;
+    --accent-soft: #eef4ff;
+    --warn: #ea580c;
+    --warn-soft: #fff4ec;
+    --ok: #059669;
+    --ok-soft: #ecfdf5;
+    --serif: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", Georgia, serif;
+    --sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 64px 32px 120px;
+  }
+  .kicker {
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    color: var(--ink-mute);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 44px;
+    line-height: 1.2;
+    margin: 0 0 16px;
+    letter-spacing: -0.01em;
+  }
+  .subtitle {
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 720px;
+    margin-bottom: 8px;
+  }
+  .meta {
+    color: var(--ink-mute);
+    font-size: 13px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 0;
+    margin: 32px 0 56px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 28px;
+    margin: 72px 0 8px;
+    letter-spacing: -0.005em;
+  }
+  h2 .num {
+    color: var(--ink-mute);
+    font-weight: 400;
+    margin-right: 10px;
+  }
+  h3 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: 19px;
+    margin: 32px 0 8px;
+  }
+  .lead {
+    font-size: 16px;
+    color: var(--ink-soft);
+    margin: 0 0 24px;
+    max-width: 760px;
+  }
+  p { margin: 0 0 14px; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    background: #ececea;
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 24px 28px;
+    margin: 16px 0;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .container { padding: 40px 20px 80px; }
+    h1 { font-size: 32px; }
+  }
+
+  /* 三个世界图 */
+  .worlds {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0;
+    margin: 32px 0;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--paper);
+  }
+  .world {
+    padding: 24px 22px;
+    border-right: 1px solid var(--line);
+    position: relative;
+  }
+  .world:last-child { border-right: none; }
+  .world .tag {
+    display: inline-block;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    padding: 3px 8px;
+    border-radius: 3px;
+    margin-bottom: 10px;
+    font-family: ui-monospace, monospace;
+  }
+  .world.bg .tag { background: #1a1a1a; color: #fff; }
+  .world.cs .tag { background: var(--accent); color: #fff; }
+  .world.ui .tag { background: var(--ok); color: #fff; }
+  .world h4 {
+    font-family: var(--serif);
+    font-size: 17px;
+    margin: 0 0 4px;
+  }
+  .world .file {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ink-mute);
+    margin-bottom: 14px;
+  }
+  .world ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 14px;
+    color: var(--ink-soft);
+  }
+  .world ul li { margin-bottom: 6px; }
+  .world .can { color: var(--ok); font-weight: 600; font-size: 12px; margin-top: 12px; display: block; }
+  .world .cant { color: var(--warn); font-weight: 600; font-size: 12px; display: block; }
+  @media (max-width: 760px) {
+    .worlds { grid-template-columns: 1fr; }
+    .world { border-right: none; border-bottom: 1px solid var(--line); }
+    .world:last-child { border-bottom: none; }
+  }
+
+  /* 数据流 */
+  .flow {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 0;
+    margin: 24px 0;
+  }
+  .flow-step {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    gap: 16px;
+    padding: 16px 28px;
+    border-bottom: 1px dashed var(--line);
+    align-items: start;
+  }
+  .flow-step:last-child { border-bottom: none; }
+  .flow-num {
+    font-family: var(--serif);
+    font-size: 26px;
+    color: var(--ink-mute);
+    line-height: 1;
+    padding-top: 4px;
+  }
+  .flow-body h4 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-family: var(--sans);
+    font-weight: 600;
+  }
+  .flow-body p {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 14px;
+  }
+  .flow-body .where {
+    display: inline-block;
+    margin-top: 6px;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 3px;
+  }
+  .flow-body .where.bg { background: #2c2c2c; color: #fff; }
+  .flow-body .where.ui { background: var(--ok-soft); color: var(--ok); }
+  .flow-body .where.ext { background: var(--warn-soft); color: var(--warn); }
+
+  /* 模式表 */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  th {
+    background: #fafaf8;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  tr:last-child td { border-bottom: none; }
+  td .pill {
+    display: inline-block;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  td .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  td .pill.no { background: #f0f0ec; color: var(--ink-mute); }
+
+  /* 模块块 */
+  .module {
+    border-left: 3px solid var(--accent);
+    padding: 14px 18px;
+    background: var(--paper);
+    border-radius: 0 6px 6px 0;
+    margin: 12px 0;
+  }
+  .module h4 {
+    font-family: var(--sans);
+    font-weight: 600;
+    margin: 0 0 4px;
+    font-size: 15px;
+  }
+  .module .files {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ink-mute);
+    margin-bottom: 6px;
+  }
+  .module p { font-size: 14px; color: var(--ink-soft); margin: 0; }
+
+  /* 边界图 */
+  .boundary {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 28px;
+    margin: 24px 0;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 28px;
+    align-items: center;
+  }
+  .boundary-side h4 { margin: 0 0 8px; font-family: var(--serif); font-size: 18px; }
+  .boundary-side p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+  .boundary-arrow {
+    font-family: ui-monospace, monospace;
+    color: var(--warn);
+    font-size: 28px;
+    text-align: center;
+  }
+  .boundary-arrow .label {
+    font-size: 11px;
+    color: var(--ink-mute);
+    display: block;
+    letter-spacing: 0.1em;
+  }
+  @media (max-width: 760px) {
+    .boundary { grid-template-columns: 1fr; }
+    .boundary-arrow { transform: rotate(90deg); }
+  }
+
+  /* 提问框 */
+  .ask {
+    background: #1a1a1a;
+    color: #f0f0ed;
+    border-radius: 8px;
+    padding: 28px 32px;
+    margin: 32px 0;
+  }
+  .ask h3 { font-family: var(--serif); margin: 0 0 12px; color: #fff; }
+  .ask ul { margin: 0; padding-left: 20px; }
+  .ask li { margin-bottom: 8px; color: #d0d0cb; font-size: 14px; }
+
+  hr {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 56px 0;
+  }
+  .footer {
+    margin-top: 80px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-mute);
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="kicker">学习路径 · 第一层 · 框架结构</div>
+  <h1>PageLens AI 是怎么搭起来的</h1>
+  <p class="subtitle">把这个项目从"一坨能跑的代码"还原成"一张能讲清楚的图"。本页不讲实现细节，只讲<strong>结构</strong>——每一块是什么、彼此怎么连、为什么要这么分。</p>
+
+  <div class="meta">
+    <span>共约 11,000 行代码 · 6 个会话模式 · 5 种 LLM 接口 · 3 个执行环境</span>
+    <span>第 1 层 / 共 N 层</span>
+  </div>
+
+  <!-- ============ 一、它到底是个什么东西 ============ -->
+  <h2><span class="num">一</span>它到底是个什么东西</h2>
+  <p class="lead">一句话定义：<strong>一个浏览器扩展，把"当前网页 / PDF / 视频字幕"变成 AI 的上下文，让你可以基于眼前的内容直接提问。</strong></p>
+
+  <div class="card">
+    <p>用工程语言再说一次：</p>
+    <ul>
+      <li>它是一个 <strong>Chrome Manifest V3 扩展</strong>（不是 Web App、不是 App、不是 CLI 工具）。</li>
+      <li>它<strong>不</strong>训练模型、<strong>不</strong>跑模型，只是一个聪明的"中间人"——把网页内容拿出来，拼成 prompt，转发给你配置的 OpenAI / Claude / Gemini / Ollama。</li>
+      <li>它附带一个<strong>本地 Python 小服务</strong>，专门负责"把对话记录写到磁盘"这件浏览器自己干不了的事。</li>
+    </ul>
+    <p>所以理解这个项目，本质上就是理解三件事：<strong>① 浏览器扩展的三个世界 ② 一次问答的数据流 ③ 浏览器为什么需要一个本地搭子</strong>。</p>
+  </div>
+
+  <!-- ============ 二、三个世界 ============ -->
+  <h2><span class="num">二</span>三个世界：扩展的骨架</h2>
+  <p class="lead">这是 MV3 扩展的核心心智模型。整个项目所有文件，都属于下面三个世界之一。它们运行在不同的 JS 进程里，<strong>不能直接互相调用函数</strong>，只能发消息。</p>
+
+  <div class="worlds">
+    <div class="world bg">
+      <span class="tag">BACKGROUND</span>
+      <h4>后台世界</h4>
+      <div class="file">background.js · ~3000 行</div>
+      <ul>
+        <li>调用 LLM 的 HTTP 请求</li>
+        <li>管理所有标签页的会话状态</li>
+        <li>路由消息给前台 / 面板</li>
+        <li>跨域抓取（B站字幕等）</li>
+      </ul>
+      <span class="can">✓ 能跨域请求任何 URL</span>
+      <span class="cant">✗ 看不到网页 DOM</span>
+      <span class="cant">✗ 随时会被浏览器杀掉</span>
+    </div>
+    <div class="world cs">
+      <span class="tag">CONTENT</span>
+      <h4>页面世界</h4>
+      <div class="file">content.js · ~3500 行</div>
+      <ul>
+        <li>渲染右侧聊天面板 DOM</li>
+        <li>抽取网页正文 / PDF</li>
+        <li>检测视频页、注入悬浮球</li>
+        <li>处理 Slash 指令、概念标注</li>
+      </ul>
+      <span class="can">✓ 能读写当前网页 DOM</span>
+      <span class="cant">✗ 不能跨域请求</span>
+      <span class="cant">✗ 看不到页面里的 JS 变量（隔离世界）</span>
+    </div>
+    <div class="world ui">
+      <span class="tag">UI PAGES</span>
+      <h4>独立页面世界</h4>
+      <div class="file">popup/ · options/</div>
+      <ul>
+        <li>点击图标弹出的小窗口</li>
+        <li>设置页（API 密钥、模型）</li>
+        <li>独立的 HTML 页面</li>
+      </ul>
+      <span class="can">✓ 普通网页能干的都能干</span>
+      <span class="cant">✗ 关掉就没了，不持久</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">为什么要分成三个？</h3>
+    <p>这不是"代码组织"问题，而是<strong>浏览器安全模型的强制要求</strong>。如果让网页里随便一段 JS 就能调你扩展的功能、读你扩展的存储、用你扩展的 API 密钥去请求任何地址——那扩展就成了攻击者的免费跳板。</p>
+    <p>所以浏览器把它们隔离开：每个世界有自己的能力边界，要协作必须通过<strong>消息通道</strong>明确传递。这是这类项目最难的部分，也是 AI 写代码最容易出错的部分。</p>
+  </div>
+
+  <!-- ============ 三、一次问答的数据流 ============ -->
+  <h2><span class="num">三</span>一次问答的完整旅程</h2>
+  <p class="lead">把整个项目当成一个剧本来看。从你按下快捷键，到屏幕上吐出第一个字，中间发生了什么？</p>
+
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-num">1</div>
+      <div class="flow-body">
+        <h4>用户按 <code>Cmd+Shift+K</code></h4>
+        <p>浏览器收到快捷键，根据 manifest 里的注册，把"toggle-panel"事件丢给后台。</p>
+        <span class="where ext">Browser → Background</span>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">2</div>
+      <div class="flow-body">
+        <h4>后台通知页面世界："给用户开面板"</h4>
+        <p>背景世界自己看不到 DOM，所以它发一条消息给当前 tab 的 content script。</p>
+        <span class="where bg">Background → Content</span>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">3</div>
+      <div class="flow-body">
+        <h4>页面世界渲染聊天面板</h4>
+        <p>content.js 在页面右侧插入一个 DOM 容器，里面装着输入框、消息列表、模式切换按钮。这是用户能看到的全部 UI。</p>
+        <span class="where">Content (DOM)</span>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">4</div>
+      <div class="flow-body">
+        <h4>用户输入问题，按回车</h4>
+        <p>页面世界根据当前"会话模式"决定要不要带上下文：网页模式抽正文，视频模式抓字幕，纯聊模式啥也不带。</p>
+        <span class="where">Content (准备 payload)</span>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">5</div>
+      <div class="flow-body">
+        <h4>把"问题 + 上下文"递交给后台</h4>
+        <p>因为只有后台能跨域请求 OpenAI / Claude 等服务，所以页面世界必须通过消息把活儿转交出去。这里用的是长连接（Port），方便后续流式接收。</p>
+        <span class="where bg">Content → Background</span>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">6</div>
+      <div class="flow-body">
+        <h4>后台拼 prompt、调 LLM</h4>
+        <p>根据用户在设置页配置的 API 类型（OpenAI / Anthropic / Gemini / Ollama / Responses），构造对应格式的请求体，开启 <code>stream: true</code>，开始接收 SSE 流。</p>
+        <span class="where bg">Background → 外部 LLM</span>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">7</div>
+      <div class="flow-body">
+        <h4>边收边推回前端，逐字显示</h4>
+        <p>每收到一个 token chunk，后台就通过那条长连接推回页面世界，content.js 把它追加到消息气泡里。这就是"打字机效果"的来源。</p>
+        <span class="where bg">Background → Content (流)</span>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-num">8</div>
+      <div class="flow-body">
+        <h4>对话结束，按需归档</h4>
+        <p>如果当前是"入库"模式，后台把整轮对话拼成 Markdown，POST 给本地 <code>127.0.0.1:8765</code> 的 Python 桥接服务，由它写到磁盘。如果是"临时"模式，就只留在内存里。</p>
+        <span class="where ui">Background → 本地 Python 服务</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <p><strong>注意一个反直觉的事实：</strong>看起来是"用户在跟 AI 聊"，实际上消息要在三个世界之间至少跳 6 次。这就是为什么调试扩展比调试网页麻烦得多——bug 可能藏在任何一段消息通道里。</p>
+  </div>
+
+  <!-- ============ 四、六种会话模式 ============ -->
+  <h2><span class="num">四</span>六种会话模式：两个开关的笛卡尔积</h2>
+  <p class="lead">项目宣称有 6 种模式，听起来很复杂。其实只是两个独立开关相乘的结果——理解这一点，整个产品逻辑就通了。</p>
+
+  <div class="grid-2">
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">开关 A：上下文从哪来？</h3>
+      <ul>
+        <li><strong>网页</strong> — 抽取整页正文（或 PDF 文本）</li>
+        <li><strong>视频</strong> — 抓 B 站 / YouTube 字幕</li>
+        <li><strong>纯聊</strong> — 不带任何页面内容</li>
+      </ul>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">开关 B：要不要存盘？</h3>
+      <ul>
+        <li><strong>入库</strong> — 写入本地 Markdown 日志</li>
+        <li><strong>临时</strong> — 只活在当前会话里</li>
+      </ul>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>模式</th><th>上下文</th><th>持久化</th><th>典型场景</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>网页 + 入库</td><td><span class="pill ok">整页正文</span></td><td><span class="pill ok">写日志</span></td><td>读一篇要复习的长文章</td></tr>
+      <tr><td>网页 + 临时</td><td><span class="pill ok">整页正文</span></td><td><span class="pill no">不写</span></td><td>随手问一句就关掉</td></tr>
+      <tr><td>视频 + 入库</td><td><span class="pill ok">视频字幕</span></td><td><span class="pill ok">写日志</span></td><td>看长课程做笔记</td></tr>
+      <tr><td>视频 + 临时</td><td><span class="pill ok">视频字幕</span></td><td><span class="pill no">不写</span></td><td>看个短视频问个梗</td></tr>
+      <tr><td>纯聊 + 入库</td><td><span class="pill no">无</span></td><td><span class="pill ok">写日志</span></td><td>当一个普通 AI 助手用</td></tr>
+      <tr><td>纯聊 + 临时</td><td><span class="pill no">无</span></td><td><span class="pill no">不写</span></td><td>问个无关的小问题</td></tr>
+    </tbody>
+  </table>
+
+  <p>这套 6 模式定义集中在 <code>shared/chatModes.js</code> 里，<strong>同一份配置被三个世界共用</strong>——这就是 <code>shared/</code> 文件夹存在的意义：避免三个世界各写一份导致漂移。</p>
+
+  <!-- ============ 五、模块地图 ============ -->
+  <h2><span class="num">五</span>模块地图：把 11000 行分成 8 块</h2>
+  <p class="lead">不要把整个项目当成"两个大文件 + 一堆杂项"。它实际上是 8 个职责相对独立的子系统拼起来的。</p>
+
+  <div class="module">
+    <h4>① 扩展骨架</h4>
+    <div class="files">manifest.json</div>
+    <p>声明扩展的能力清单：要哪些权限、注入哪些脚本、注册哪个快捷键。整个项目的"配置中枢"。</p>
+  </div>
+
+  <div class="module">
+    <h4>② 后台调度中心</h4>
+    <div class="files">background.js</div>
+    <p>会话状态管理、消息路由、LLM 请求构造、流式响应转发。它是整个扩展的"大脑"。</p>
+  </div>
+
+  <div class="module">
+    <h4>③ 页面 UI + 内容抽取</h4>
+    <div class="files">content.js · styles/content.css</div>
+    <p>面板 DOM、Markdown 渲染、用户输入处理、网页正文抽取、悬浮球、概念标注。所有"用户能看到摸到"的东西。</p>
+  </div>
+
+  <div class="module">
+    <h4>④ 设置页与弹窗</h4>
+    <div class="files">options/ · popup/</div>
+    <p>独立的 HTML 页面。设置页负责 API 配置和连通性测试，弹窗负责快速切换模式。</p>
+  </div>
+
+  <div class="module">
+    <h4>⑤ 共享定义层（关键）</h4>
+    <div class="files">shared/chatModes.js · mentorModes.js · slashCommands.js · skills.js</div>
+    <p>三个世界都需要的常量与枚举。这一层的存在是为了<strong>消除重复</strong>。AI 写代码时最容易在这里复制粘贴出三份不同步的版本。</p>
+  </div>
+
+  <div class="module">
+    <h4>⑥ 内容抽取专项</h4>
+    <div class="files">shared/pdfParser.js · videoContext.js · imageInput.js</div>
+    <p>三种"特殊上下文"的抓取：PDF 用 pdf.js 解析文本，视频要懂 B 站 / YouTube 的字幕接口，图片要做 base64 编码。每一个都是独立的小工程。</p>
+  </div>
+
+  <div class="module">
+    <h4>⑦ 第三方库</h4>
+    <div class="files">lib/marked.min.js · pdf.min.js · pdf.worker.min.js</div>
+    <p>Markdown 渲染和 PDF 解析。直接打包进扩展，不依赖 CDN——因为有些用户访问的页面可能屏蔽外部资源。</p>
+  </div>
+
+  <div class="module">
+    <h4>⑧ 本地桥接服务</h4>
+    <div class="files">tools/session_log_bridge.py</div>
+    <p>一个独立的 Python 程序，跑在用户自己电脑上，监听 <code>127.0.0.1:8765</code>。它和扩展之间通过 HTTP 通信，不属于扩展本身。</p>
+  </div>
+
+  <!-- ============ 六、为什么需要 Python ============ -->
+  <h2><span class="num">六</span>边界故事：浏览器为什么需要一个本地搭子</h2>
+  <p class="lead">这是整个项目最值得玩味的设计决策。它揭示了浏览器的一个根本限制——也是你理解 Web 安全模型的好机会。</p>
+
+  <div class="boundary">
+    <div class="boundary-side">
+      <h4>浏览器扩展能做的</h4>
+      <p>读 DOM、调远程 API、用 chrome.storage 存几 MB 数据、显示通知。</p>
+    </div>
+    <div class="boundary-arrow">
+      ╳
+      <span class="label">不能跨越</span>
+    </div>
+    <div class="boundary-side">
+      <h4>浏览器扩展<strong>不能</strong>做的</h4>
+      <p>把数据写到任意本地路径（比如 <code>~/Documents/笔记/</code>）、读你硬盘上的其他文件、调系统命令。</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <p><strong>为什么不行？</strong>浏览器从设计上就把 Web 内容当成"潜在敌对方"对待——任何网页或扩展都不能随便动你的文件系统，否则一个恶意扩展就能加密你所有文档。</p>
+    <p><strong>那怎么办？</strong>项目作者的解法很经典：<strong>在用户自己的电脑上跑一个小型 HTTP 服务</strong>，扩展通过 <code>fetch('http://127.0.0.1:8765/log-session')</code> 把数据发给它，由这个 Python 程序代为写盘。</p>
+    <p>这就把"危险操作"的责任明确转移到了一个用户主动启动、能随时关掉的程序里。这个模式在很多桌面级 Web 工具里都用过——比如 Obsidian 的本地 REST 插件、Logseq 的同步桥、各种 IDE 的浏览器扩展。</p>
+  </div>
+
+  <!-- ============ 七、检验你是否真的懂了 ============ -->
+  <h2><span class="num">七</span>自检清单</h2>
+  <p class="lead">不需要打开代码。如果下面这些问题你都能用一两句话答出来，第一层就过关了。</p>
+
+  <div class="ask">
+    <h3>合上这一页，你能回答吗？</h3>
+    <ul>
+      <li>这个项目最核心的"中间人"角色是什么？它<strong>不</strong>做什么？</li>
+      <li>三个执行世界分别叫什么？哪一个能调远程 API？哪一个能读 DOM？</li>
+      <li>为什么 LLM 请求<strong>必须</strong>放在后台世界、不能放在页面世界？</li>
+      <li>用户按下回车之后，消息至少要在世界之间跳几次？为什么需要这么多跳？</li>
+      <li>"6 种会话模式"本质上是哪两个独立开关的组合？</li>
+      <li>为什么需要一个 Python 程序？没有它会丢失什么功能？</li>
+      <li><code>shared/</code> 这个文件夹解决了什么问题？如果不要它会怎样？</li>
+    </ul>
+  </div>
+
+  <hr />
+
+  <h2 style="margin-top: 0;">下一层会讲什么</h2>
+  <div class="grid-3">
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第二层 · 通信协议</h3>
+      <p>三个世界之间到底用什么消息格式对话？事件型消息和长连接 Port 各自适合什么场景？流式响应是怎么从 SSE 一路接力到 DOM 的？</p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第三层 · 状态机</h3>
+      <p>每个标签页的会话状态是怎么组织的？为什么 service worker 会被杀掉，状态又如何恢复？同一时间多个标签页打开，它们怎么互不干扰？</p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第四层 · 适配层</h3>
+      <p>5 种 LLM 接口（OpenAI Chat / Responses / Anthropic / Gemini / Ollama）的请求体和流格式有什么共性？项目是怎么用一套抽象把它们包起来的？</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>PageLens AI · 框架结构 · 第一层</span>
+    <span>diagrams/architecture-level-1.html</span>
+  </div>
+
+</div>
+</body>
+</html>

@@ -55,6 +55,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentMentorFlavor = MentorAPI ? MentorAPI.DEFAULT_MENTOR_FLAVOR : 'off';
     const mentorToggle = document.getElementById('mentorToggle');
     const mentorPopover = document.getElementById('mentorPopover');
+    const SkillsAPI = self.WebChatSkills || null;
+    let currentSkillId = SkillsAPI ? SkillsAPI.DEFAULT_SKILL_ID : 'off';
+    const skillToggle = document.getElementById('skillToggle');
+    const skillPopover = document.getElementById('skillPopover');
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const tabId = tab.id;
@@ -76,6 +80,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             sendResponse({ status: 'ok' });
         } else if (request.action === 'mentorFlavorUpdated' && request.tabId === tabId) {
             updateMentorUI(request.mentorFlavor);
+            sendResponse({ status: 'ok' });
+        } else if (request.action === 'skillUpdated' && request.tabId === tabId) {
+            updateSkillUI(request.skillId);
             sendResponse({ status: 'ok' });
         }
         return true;
@@ -198,6 +205,97 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // ----- Skill 选择 -----
+    const skillOverrides = { labels: {} };
+    function refreshSkillOverrides(cb) {
+        try {
+            chrome.storage.sync.get({ skillLabels: {} }, ({ skillLabels }) => {
+                skillOverrides.labels = skillLabels || {};
+                if (cb) cb();
+            });
+        } catch (e) { /* ignore */ }
+    }
+
+    function skillLabelFor(id) {
+        return SkillsAPI && SkillsAPI.resolveSkillLabel
+            ? SkillsAPI.resolveSkillLabel(id, skillOverrides.labels)
+            : id;
+    }
+
+    function buildSkillPopover() {
+        if (!skillPopover || !SkillsAPI) return;
+        const skills = SkillsAPI.getAll();
+        skillPopover.innerHTML = skills.map((skill) => {
+            const active = skill.id === currentSkillId ? ' active' : '';
+            const label = skillLabelFor(skill.id);
+            const hint = skill.hint || skill.description || '';
+            return `<button type="button" class="skill-item${active}" data-skill="${skill.id}" role="menuitemradio" aria-checked="${skill.id === currentSkillId}">
+                <span class="skill-item-icon">${skill.icon || '🛠️'}</span>
+                <span class="skill-item-main">
+                    <span class="skill-item-label">${label}</span>
+                    <span class="skill-item-hint">${hint}</span>
+                </span>
+            </button>`;
+        }).join('');
+    }
+
+    function updateSkillUI(id) {
+        if (!SkillsAPI || !skillToggle) return;
+        currentSkillId = SkillsAPI.normalizeSkillId(id);
+        const isOn = SkillsAPI.isSkillActive(currentSkillId);
+        skillToggle.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+        skillToggle.classList.toggle('active', isOn);
+        const skill = SkillsAPI.getSkill(currentSkillId);
+        const label = skillLabelFor(currentSkillId);
+        skillToggle.title = isOn ? `Skill：${label}（点击切换）` : '选择内置 Skill（特定任务的专家系统提示词）';
+        skillToggle.textContent = isOn ? (skill.icon || '🪄') : '🪄';
+        buildSkillPopover();
+    }
+
+    refreshSkillOverrides(() => buildSkillPopover());
+    try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area !== 'sync' && area !== 'local') return;
+            if (changes.skillLabels) {
+                refreshSkillOverrides(() => buildSkillPopover());
+            }
+        });
+    } catch (e) { /* ignore */ }
+
+    if (skillToggle && skillPopover && SkillsAPI) {
+        buildSkillPopover();
+        skillToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            skillPopover.hidden = !skillPopover.hidden;
+        });
+        skillPopover.addEventListener('click', async (e) => {
+            const item = e.target.closest('.skill-item');
+            if (!item) return;
+            const id = item.dataset.skill;
+            skillPopover.hidden = true;
+            if (id === currentSkillId) return;
+            try {
+                const response = await chrome.runtime.sendMessage({
+                    action: 'setSkill',
+                    tabId,
+                    skillId: id
+                });
+                if (!response || response.status !== 'ok') {
+                    throw new Error(response?.error || '切换 Skill 失败');
+                }
+                updateSkillUI(response.skillId);
+            } catch (error) {
+                console.error('切换 Skill 失败:', error);
+                addMessage('发生错误：' + error.message, false);
+            }
+        });
+        document.addEventListener('click', (e) => {
+            if (!skillPopover.hidden && !skillPopover.contains(e.target) && e.target !== skillToggle) {
+                skillPopover.hidden = true;
+            }
+        });
+    }
+
     chatModeButtons.forEach((btn) => {
         btn.addEventListener('click', async () => {
             if (suppressModeSelect) {
@@ -272,6 +370,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                         'shared/chatModes.js',
                         'shared/mentorModes.js',
                         'shared/slashCommands.js',
+                        'shared/skills.js',
+                        'shared/skills/guizangPpt.js',
                         'shared/pdfParser.js',
                         'shared/videoContext.js',
                         'shared/imageInput.js',
@@ -420,6 +520,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             updateChatModeUI(response?.chatMode || 'web_persisted');
             updateMentorUI(response?.mentorFlavor);
+            updateSkillUI(response?.skillId);
             messagesContainer.innerHTML = '';
 
             if (!response || !response.history || response.history.length === 0) {
@@ -490,6 +591,19 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (meta.contextSource === 'video') {
                 pageContent = await getPageContent(tab, 'video');
             }
+
+            // Skill 选择性附加：当前 skill 声明 wantsImages 时，从 content script 取
+            // 当前页面图片清单并拼到 pageContent 末尾。
+            try {
+                const skill = SkillsAPI?.getSkill?.(currentSkillId);
+                if (skill?.wantsImages && pageContent) {
+                    const resp = await chrome.tabs.sendMessage(tab.id, { action: 'getPageImages' });
+                    if (resp?.inventoryMarkdown) pageContent += resp.inventoryMarkdown;
+                }
+            } catch (e) {
+                console.warn('[PageLens AI] 图片清单注入失败:', e);
+            }
+
             const prepare = await chrome.runtime.sendMessage({
                 action: 'prepareGeneration',
                 tabId,

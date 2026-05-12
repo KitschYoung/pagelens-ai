@@ -1,9 +1,10 @@
 const DEFAULT_SETTINGS = {
     apiType: 'openai_chat',
-    maxTokens: 2048,
+    maxTokens: 8192,
     temperature: 0.7,
     enableContext: true,
     maxContextRounds: 5,
+    enableFocusBubble: false,
     systemPrompt: '你是一个帮助理解网页内容的AI助手。请使用Markdown格式回复。',
     // 请在扩展设置页填写密钥与端点；此处默认值保持为空，避免泄露。
     openai_chat_apiKey: '',
@@ -37,7 +38,9 @@ const DEFAULT_SETTINGS = {
     sessionLogWorkspaceRoot: '',
     sessionIdleMinutes: 30,
     mentorPrompts: {},
-    mentorLabels: {}
+    mentorLabels: {},
+    skillPrompts: {},
+    skillLabels: {}
 };
 
 const STORAGE_KEYS = {
@@ -52,11 +55,16 @@ const STORAGE_KEYS = {
 // 按域名记忆的默认会话模式：{ [domain]: chatMode }
 let domainModePrefs = {};
 
-// 加载共享的会话模式与带教模式定义（供 importScripts 引入）
+// 加载共享的会话模式 / 带教模式 / Skills 定义（供 importScripts 引入）
 try {
-    importScripts('shared/chatModes.js', 'shared/mentorModes.js');
+    importScripts(
+        'shared/chatModes.js',
+        'shared/mentorModes.js',
+        'shared/skills.js',
+        'shared/skills/guizangPpt.js'
+    );
 } catch (e) {
-    console.error('加载 shared/chatModes.js / shared/mentorModes.js 失败:', e);
+    console.error('加载 shared/* 模块失败:', e);
 }
 
 const {
@@ -72,6 +80,15 @@ const {
     isMentorActive,
     buildMentorSystemPrompt
 } = self.WebChatMentor;
+
+const {
+    SKILL_OFF,
+    DEFAULT_SKILL_ID,
+    normalizeSkillId,
+    isSkillActive,
+    preloadSkill,
+    buildSkillSystemPrompt
+} = self.WebChatSkills;
 
 const runtimePorts = {};
 const runtimeControllers = {};
@@ -146,6 +163,9 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     if (changes.mentorPrompts) {
         console.log('带教提示词已更新');
     }
+    if (changes.skillPrompts) {
+        console.log('Skill 提示词覆盖已更新');
+    }
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
@@ -193,8 +213,16 @@ async function handleRuntimeMessage(request, sender) {
         return await setMentorFlavor(request.tabId, request.mentorFlavor);
     }
 
+    if (action === 'setSkill') {
+        return await setSkill(request.tabId, request.skillId);
+    }
+
     if (action === 'annotateConcepts') {
         return await annotateConcepts(request.pageContent || '', request.pageTitle || '');
+    }
+
+    if (action === 'generateFocusQuestion') {
+        return await generateFocusQuestion(request.excerpt || '', request.pageTitle || '', request.pageUrl || '');
     }
 
     if (action === 'clearHistory') {
@@ -331,12 +359,15 @@ async function loadSettings() {
     const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
     settings.apiType = normalizeApiType(settings.apiType);
     try {
-        const local = await chrome.storage.local.get({ mentorPrompts: null });
+        const local = await chrome.storage.local.get({ mentorPrompts: null, skillPrompts: null });
         if (local.mentorPrompts && typeof local.mentorPrompts === 'object') {
             settings.mentorPrompts = local.mentorPrompts;
         }
+        if (local.skillPrompts && typeof local.skillPrompts === 'object') {
+            settings.skillPrompts = local.skillPrompts;
+        }
     } catch (error) {
-        console.warn('读取本地带教提示词失败，使用同步配置:', error);
+        console.warn('读取本地 mentor/skill 提示词失败，使用同步配置:', error);
     }
     return settings;
 }
@@ -431,6 +462,7 @@ function normalizeSession(session = {}) {
             lastRecoveryReason: session.sessionMeta?.lastRecoveryReason || '',
             currentChatMode: normalizeChatMode(session.sessionMeta?.currentChatMode),
             mentorFlavor: normalizeMentorFlavor(session.sessionMeta?.mentorFlavor),
+            skillId: normalizeSkillId(session.sessionMeta?.skillId),
             isFinalizing: Boolean(session.sessionMeta?.isFinalizing)
         },
         history: normalizeHistory(session.history || []),
@@ -762,6 +794,48 @@ function broadcastMentorFlavorUpdate(tabId, mentorFlavor, reason) {
     }
 }
 
+async function setSkill(tabId, skillId) {
+    const normalizedId = normalizeSkillId(skillId);
+    const tabInfo = await getTabSnapshot(tabId);
+    let session = getSession(tabId);
+
+    if (!session) {
+        session = createSession(tabInfo);
+        session.sessionMeta.skillId = normalizedId;
+    } else {
+        session.sessionMeta.skillId = normalizedId;
+        updateSessionPageInfo(session, tabInfo);
+        touchSession(session);
+    }
+
+    await saveSession(tabId, session, true);
+
+    // 立刻预热 skill prompt（异步，不阻塞响应）
+    if (isSkillActive(normalizedId)) {
+        preloadSkill(normalizedId).catch((e) => console.warn('preloadSkill 失败:', e));
+    }
+
+    broadcastSkillUpdate(tabId, normalizedId, 'skill-changed');
+
+    return {
+        status: 'ok',
+        skillId: normalizedId
+    };
+}
+
+function broadcastSkillUpdate(tabId, skillId, reason) {
+    const message = {
+        action: 'skillUpdated',
+        tabId,
+        skillId,
+        reason
+    };
+    chrome.runtime.sendMessage(message).catch(() => { });
+    if (typeof tabId === 'number') {
+        chrome.tabs.sendMessage(tabId, message).catch(() => { });
+    }
+}
+
 async function startGenerationFromPort(port, request) {
     const tabId = request.tabId;
     const settings = await loadSettings();
@@ -926,6 +1000,12 @@ async function handleAnswerGeneration(tabId, question, pageContent, settings) {
     runtimeControllers[session.sessionMeta.sessionId] = abortController;
 
     try {
+        // 在构造请求前预热当前 skill 的系统提示词（只 fetch 一次）
+        const activeSkillId = session.sessionMeta?.skillId;
+        if (isSkillActive(activeSkillId)) {
+            try { await preloadSkill(activeSkillId); } catch (e) { console.warn('preloadSkill 失败:', e); }
+        }
+
         const { requestMessages, promptContent } = buildMessagesForRequest(session, settings, question, pageContent, turn);
         const apiType = normalizeApiType(settings.apiType);
         const model = getApiSetting(settings, 'model');
@@ -1175,11 +1255,16 @@ function buildMessagesForRequest(session, settings, question, pageContent, turn)
         while (history.length && !history[0].isUser) history = history.slice(1);
     }
 
-    // system prompt（如启用带教模式则叠加对应风格的提示词）
+    // system prompt：base → 叠加 mentor → 再叠加 skill（skill 优先级最高）
     const mentorFlavor = session.sessionMeta?.mentorFlavor;
-    const systemContent = isMentorActive(mentorFlavor)
-        ? buildMentorSystemPrompt(mentorFlavor, settings.systemPrompt, settings.mentorPrompts)
-        : settings.systemPrompt;
+    const skillId = session.sessionMeta?.skillId;
+    let systemContent = settings.systemPrompt || '';
+    if (isMentorActive(mentorFlavor)) {
+        systemContent = buildMentorSystemPrompt(mentorFlavor, systemContent, settings.mentorPrompts);
+    }
+    if (isSkillActive(skillId)) {
+        systemContent = buildSkillSystemPrompt(skillId, systemContent, settings.skillPrompts);
+    }
 
     const messages = [{ role: 'system', content: systemContent }];
 
@@ -1277,6 +1362,7 @@ async function getContextDump(tabId) {
             sessionId: session.sessionMeta?.sessionId || '',
             chatMode,
             mentorFlavor: session.sessionMeta?.mentorFlavor || 'off',
+            skillId: session.sessionMeta?.skillId || 'off',
             historyCount: history.length,
             preambleCount: (session.sessionMeta?.preambleChain || []).length
         }
@@ -1728,6 +1814,65 @@ async function annotateConcepts(pageContent, pageTitle) {
     }
 }
 
+async function generateFocusQuestion(excerpt, pageTitle, pageUrl) {
+    try {
+        const settings = await loadSettings();
+        const text = String(excerpt || '').replace(/\s+/g, ' ').trim();
+        if (text.length < 80) {
+            return { status: 'ignored', error: '区域正文太短' };
+        }
+
+        const systemPrompt = [
+            '你是网页阅读助手，会根据用户当前停留的网页区域替用户提出一个有助于理解的追问。',
+            '只返回一个 JSON 对象，不要 Markdown，不要前言，不要解释。',
+            'JSON 形如：{"question":"问题"}。',
+            'question 必须是中文，长度不超过 48 个中文字符，必须围绕给定区域文本，避免泛泛而谈。'
+        ].join('\n');
+
+        const userPrompt = [
+            `网页标题：${pageTitle || '（未知）'}`,
+            `网页 URL：${pageUrl || '（未知）'}`,
+            '',
+            '当前停留区域文本：',
+            text.slice(0, 1500)
+        ].join('\n');
+
+        const raw = await callLLMOnce(settings, [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+        ], { temperature: 0.3, maxTokens: 180 });
+
+        let jsonText = String(raw || '').trim();
+        const fence = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/);
+        if (fence) jsonText = fence[1].trim();
+        const objectStart = jsonText.indexOf('{');
+        const objectEnd = jsonText.lastIndexOf('}');
+        if (objectStart >= 0 && objectEnd > objectStart) {
+            jsonText = jsonText.slice(objectStart, objectEnd + 1);
+        }
+
+        let parsed;
+        try {
+            parsed = JSON.parse(jsonText);
+        } catch (e) {
+            return { status: 'error', error: `无法解析 LLM 返回的 JSON: ${e.message}`, raw: String(raw || '').slice(0, 300) };
+        }
+
+        const question = String(parsed?.question || '').replace(/\s+/g, ' ').trim();
+        if (!question) {
+            return { status: 'error', error: 'LLM 未返回 question' };
+        }
+
+        return {
+            status: 'ok',
+            question: question.length > 60 ? question.slice(0, 60) : question
+        };
+    } catch (error) {
+        console.debug('generateFocusQuestion 失败:', error);
+        return { status: 'error', error: error.message };
+    }
+}
+
 async function fetchApiModels(config) {
     try {
         const apiType = normalizeApiType(config.apiType);
@@ -1877,7 +2022,8 @@ function buildHistoryResponse(session) {
             pendingQuestion: '',
             currentAnswer: '',
             chatMode: DEFAULT_CHAT_MODE,
-            mentorFlavor: DEFAULT_MENTOR_FLAVOR
+            mentorFlavor: DEFAULT_MENTOR_FLAVOR,
+            skillId: DEFAULT_SKILL_ID
         };
     }
 
@@ -1888,7 +2034,8 @@ function buildHistoryResponse(session) {
         currentAnswer: session.currentAnswer || '',
         sessionId: session.sessionMeta.sessionId,
         chatMode: session.sessionMeta.currentChatMode,
-        mentorFlavor: session.sessionMeta.mentorFlavor || DEFAULT_MENTOR_FLAVOR
+        mentorFlavor: session.sessionMeta.mentorFlavor || DEFAULT_MENTOR_FLAVOR,
+        skillId: session.sessionMeta.skillId || DEFAULT_SKILL_ID
     };
 }
 
@@ -1965,6 +2112,7 @@ function buildArchiveIndexEntry(session, mode /* 'persisted' | 'ephemeral' */) {
         turnCount: (session.turns || []).length,
         chatMode: meta.currentChatMode,
         mentorFlavor: meta.mentorFlavor,
+        skillId: meta.skillId || DEFAULT_SKILL_ID,
         mode: mode || (modeShouldPersist(meta.currentChatMode) ? 'persisted' : 'ephemeral'),
         preview: buildArchivePreview(session)
     };
@@ -2152,6 +2300,7 @@ async function restoreArchiveToTab(tabId, sessionId) {
         sessionId: restored.sessionMeta.sessionId,
         chatMode: restored.sessionMeta.currentChatMode,
         mentorFlavor: restored.sessionMeta.mentorFlavor,
+        skillId: restored.sessionMeta.skillId || DEFAULT_SKILL_ID,
         turnCount: restored.turns.length
     };
 }

@@ -1,0 +1,1038 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>MV3 浏览器扩展 · 第一层 · 入门</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-mute: #8a8a8a;
+    --line: #e2e2dd;
+    --line-strong: #c9c9c1;
+    --paper: #ffffff;
+    --accent: #2563eb;
+    --accent-soft: #eef4ff;
+    --warn: #ea580c;
+    --warn-soft: #fff4ec;
+    --ok: #059669;
+    --ok-soft: #ecfdf5;
+    --pink: #db2777;
+    --pink-soft: #fdf2f8;
+    --purple: #7c3aed;
+    --purple-soft: #f3eeff;
+    --serif: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", Georgia, serif;
+    --sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1080px; margin: 0 auto; padding: 64px 32px 120px; }
+
+  .kicker {
+    font-size: 12px; letter-spacing: 0.18em; color: var(--ink-mute);
+    text-transform: uppercase; margin-bottom: 12px;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 600;
+    font-size: 44px; line-height: 1.2; margin: 0 0 16px;
+    letter-spacing: -0.01em;
+  }
+  .subtitle { font-size: 17px; color: var(--ink-soft); max-width: 720px; }
+  .meta {
+    color: var(--ink-mute); font-size: 13px;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 10px 0; margin: 32px 0 56px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+
+  h2 {
+    font-family: var(--serif); font-weight: 600; font-size: 28px;
+    margin: 80px 0 8px; letter-spacing: -0.005em;
+  }
+  h2 .num { color: var(--ink-mute); font-weight: 400; margin-right: 10px; }
+  h3 {
+    font-family: var(--serif); font-weight: 600; font-size: 19px;
+    margin: 28px 0 10px;
+  }
+  .lead { font-size: 16px; color: var(--ink-soft); margin: 0 0 24px; max-width: 760px; }
+  p { margin: 0 0 14px; }
+  code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px; background: #ececea; padding: 1px 6px; border-radius: 4px;
+  }
+
+  .card {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 24px 28px; margin: 16px 0;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 760px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .container { padding: 40px 20px 80px; }
+    h1 { font-size: 32px; }
+  }
+
+  /* 类比卡 */
+  .analogy {
+    background: linear-gradient(180deg, #fff 0%, #fafaf8 100%);
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 32px; margin: 24px 0;
+    display: grid; grid-template-columns: auto 1fr; gap: 28px; align-items: center;
+  }
+  .analogy .icon {
+    width: 96px; height: 96px;
+    background: var(--accent-soft); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 48px;
+  }
+  .analogy h3 { margin: 0 0 6px; font-size: 18px; }
+  .analogy p { margin: 0; color: var(--ink-soft); font-size: 14px; }
+  @media (max-width: 760px) { .analogy { grid-template-columns: 1fr; text-align: center; } .analogy .icon { margin: 0 auto; } }
+
+  /* 对比表 */
+  table {
+    width: 100%; border-collapse: collapse; margin: 16px 0;
+    font-size: 14px; background: var(--paper);
+    border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+  }
+  th, td { text-align: left; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  th { background: #fafaf8; font-weight: 600; font-size: 13px; color: var(--ink-soft); }
+  tr:last-child td { border-bottom: none; }
+  td.yes { color: var(--ok); font-weight: 600; }
+  td.no { color: var(--ink-mute); }
+  td.partial { color: var(--warn); font-weight: 600; }
+
+  /* SVG 浏览器解剖 */
+  .browser-anatomy {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 12px; padding: 28px; margin: 24px 0;
+  }
+  .browser-anatomy svg { width: 100%; height: auto; max-width: 100%; }
+  .anatomy-key {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 12px; margin-top: 20px; font-size: 13px;
+  }
+  .anatomy-key .row {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px 12px; border-radius: 6px; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .anatomy-key .row:hover { background: #f0f0ec; }
+  .anatomy-key .swatch {
+    width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; margin-top: 4px;
+  }
+  .anatomy-key .row strong { display: block; }
+  .anatomy-key .row span { color: var(--ink-soft); font-size: 12px; }
+  @media (max-width: 760px) { .anatomy-key { grid-template-columns: 1fr; } }
+
+  /* 三世界对照 */
+  .worlds {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0;
+    margin: 24px 0; border: 1px solid var(--line-strong);
+    border-radius: 8px; overflow: hidden; background: var(--paper);
+  }
+  .world { padding: 20px 22px; border-right: 1px solid var(--line); }
+  .world:last-child { border-right: none; }
+  .world .tag {
+    display: inline-block; font-size: 11px; letter-spacing: 0.1em;
+    padding: 3px 8px; border-radius: 3px; margin-bottom: 10px;
+    font-family: ui-monospace, monospace;
+  }
+  .world.bg .tag { background: #1a1a1a; color: #fff; }
+  .world.cs .tag { background: var(--accent); color: #fff; }
+  .world.ui .tag { background: var(--ok); color: #fff; }
+  .world h4 { font-family: var(--serif); font-size: 16px; margin: 0 0 4px; }
+  .world .where {
+    font-size: 11px; color: var(--ink-mute); margin-bottom: 12px;
+    font-family: ui-monospace, monospace;
+  }
+  .world ul { margin: 0 0 12px; padding-left: 18px; font-size: 13px; color: var(--ink-soft); }
+  .world ul li { margin-bottom: 4px; }
+  .world .can { color: var(--ok); font-size: 11px; font-weight: 600; }
+  .world .cant { color: var(--warn); font-size: 11px; font-weight: 600; }
+  @media (max-width: 760px) {
+    .worlds { grid-template-columns: 1fr; }
+    .world { border-right: none; border-bottom: 1px solid var(--line); }
+    .world:last-child { border-bottom: none; }
+  }
+
+  /* 文件树 */
+  .filetree {
+    font-family: ui-monospace, monospace; font-size: 13px;
+    background: #1a1a1a; color: #e0e0d8;
+    border-radius: 8px; padding: 20px 24px; margin: 16px 0;
+    overflow-x: auto;
+  }
+  .filetree .dir { color: #7dd3fc; }
+  .filetree .file { color: #fde68a; }
+  .filetree .comment { color: #888; }
+  .filetree .req { color: #f87171; }
+
+  /* 消息传递动画 */
+  .message-demo {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 24px; margin: 16px 0;
+  }
+  .demo-stage {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0;
+    border: 1px dashed var(--line-strong);
+    border-radius: 6px; padding: 0; min-height: 160px;
+    position: relative; overflow: hidden;
+  }
+  .demo-zone {
+    padding: 16px; border-right: 1px dashed var(--line);
+    position: relative; min-height: 160px;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: flex-start; gap: 10px;
+  }
+  .demo-zone:last-child { border-right: none; }
+  .demo-zone .label {
+    font-size: 11px; letter-spacing: 0.1em; color: var(--ink-mute);
+    font-family: ui-monospace, monospace;
+  }
+  .demo-zone .target {
+    width: 56px; height: 56px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; border: 2px solid;
+  }
+  .demo-zone.bg .target { border-color: #1a1a1a; background: #f5f5f3; }
+  .demo-zone.cs .target { border-color: var(--accent); background: var(--accent-soft); }
+  .demo-zone.ui .target { border-color: var(--ok); background: var(--ok-soft); }
+  .pkt {
+    position: absolute; top: 80px; left: 0;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--warn); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700;
+    transform: translate(-50%, -50%); pointer-events: none;
+    transition: left 0.7s cubic-bezier(0.65, 0, 0.35, 1);
+    box-shadow: 0 4px 12px rgba(234, 88, 12, 0.4);
+  }
+  .demo-controls {
+    margin-top: 16px; display: flex; gap: 10px; align-items: center;
+    flex-wrap: wrap;
+  }
+  .demo-controls button {
+    padding: 8px 16px; border: 1px solid var(--line-strong);
+    background: var(--paper); border-radius: 5px;
+    cursor: pointer; font-family: var(--sans); font-size: 13px;
+    transition: all 0.15s;
+  }
+  .demo-controls button:hover { background: #f0f0ec; border-color: var(--ink); }
+  .demo-controls button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .demo-controls button.primary:hover { background: #1d4ed8; }
+  .demo-log {
+    margin-top: 14px; font-family: ui-monospace, monospace;
+    font-size: 12px; color: var(--ink-soft);
+    background: #fafaf8; border-radius: 5px; padding: 10px 14px;
+    min-height: 40px; max-height: 100px; overflow-y: auto;
+  }
+
+  /* 生命周期时间线 */
+  .timeline {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 28px; margin: 16px 0;
+    overflow-x: auto;
+  }
+  .timeline-track {
+    position: relative; min-width: 700px; padding: 0 0 80px;
+  }
+  .tl-bar {
+    position: relative; height: 8px; background: #f0f0ec;
+    border-radius: 4px; margin: 40px 0 0;
+  }
+  .tl-segment {
+    position: absolute; height: 100%; border-radius: 4px;
+  }
+  .tl-segment.alive { background: var(--ok); }
+  .tl-segment.dead { background: #d4d4cc; }
+  .tl-event {
+    position: absolute; top: -28px;
+    transform: translateX(-50%); text-align: center;
+    font-size: 11px; color: var(--ink-soft);
+  }
+  .tl-event::after {
+    content: ''; display: block; width: 1px; height: 18px;
+    background: var(--ink-mute); margin: 4px auto 0;
+  }
+  .tl-note {
+    position: absolute; top: 30px;
+    transform: translateX(-50%); width: 140px; text-align: center;
+    font-size: 11px; color: var(--ink-soft); line-height: 1.4;
+  }
+  .tl-note strong { color: var(--ink); display: block; margin-bottom: 2px; }
+  .legend {
+    display: flex; gap: 20px; font-size: 12px;
+    color: var(--ink-soft); margin-top: 16px;
+  }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .legend i {
+    width: 14px; height: 14px; border-radius: 3px; display: inline-block;
+  }
+
+  /* 权限卡 */
+  .perm-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    margin: 16px 0;
+  }
+  .perm {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px;
+    border-left: 4px solid;
+  }
+  .perm.low { border-left-color: var(--ok); }
+  .perm.mid { border-left-color: var(--warn); }
+  .perm.high { border-left-color: var(--pink); }
+  .perm h4 {
+    margin: 0 0 4px; font-family: ui-monospace, monospace;
+    font-size: 13px; font-weight: 600;
+  }
+  .perm .level {
+    font-size: 10px; letter-spacing: 0.12em;
+    padding: 2px 6px; border-radius: 3px; margin-bottom: 8px;
+    display: inline-block; text-transform: uppercase;
+  }
+  .perm.low .level { background: var(--ok-soft); color: var(--ok); }
+  .perm.mid .level { background: var(--warn-soft); color: var(--warn); }
+  .perm.high .level { background: var(--pink-soft); color: var(--pink); }
+  .perm p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+  @media (max-width: 760px) { .perm-grid { grid-template-columns: 1fr; } }
+
+  /* MV2 vs MV3 */
+  .versus {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: 24px;
+    margin: 24px 0; align-items: stretch;
+  }
+  .versus-side {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 20px;
+  }
+  .versus-side h4 {
+    font-family: var(--serif); font-size: 17px;
+    margin: 0 0 4px;
+  }
+  .versus-side .when {
+    font-size: 11px; color: var(--ink-mute);
+    font-family: ui-monospace, monospace; margin-bottom: 12px;
+  }
+  .versus-side ul { padding-left: 18px; margin: 0; font-size: 13px; color: var(--ink-soft); }
+  .versus-side li { margin-bottom: 6px; }
+  .versus-arrow {
+    font-size: 24px; color: var(--ink-mute);
+    align-self: center; font-family: ui-monospace, monospace;
+  }
+  @media (max-width: 760px) {
+    .versus { grid-template-columns: 1fr; }
+    .versus-arrow { transform: rotate(90deg); justify-self: center; }
+  }
+
+  /* 测验 */
+  .quiz { margin: 32px 0; }
+  .qbox {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 20px 24px; margin-bottom: 12px;
+  }
+  .qbox .q {
+    font-weight: 600; margin-bottom: 12px;
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .qbox .q .qn {
+    font-family: var(--serif); font-size: 22px;
+    color: var(--ink-mute); line-height: 1;
+  }
+  .qbox .options { display: flex; flex-direction: column; gap: 6px; }
+  .qbox .opt {
+    padding: 10px 14px; border: 1px solid var(--line);
+    border-radius: 5px; cursor: pointer; font-size: 14px;
+    transition: all 0.15s; background: #fafaf8;
+  }
+  .qbox .opt:hover { background: #f0f0ec; }
+  .qbox .opt.correct { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+  .qbox .opt.wrong { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+  .qbox .answer {
+    margin-top: 12px; padding: 12px 14px;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 5px; font-size: 13px; display: none;
+  }
+  .qbox.answered .answer { display: block; }
+
+  /* 拟态浏览器壳 */
+  .browser-mock {
+    border: 1px solid var(--line-strong); border-radius: 10px;
+    overflow: hidden; background: var(--paper); margin: 16px 0;
+  }
+  .browser-bar {
+    background: #f0f0ec; padding: 8px 12px;
+    display: flex; gap: 6px; align-items: center;
+    border-bottom: 1px solid var(--line);
+  }
+  .browser-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .browser-dot.r { background: #ff5f57; }
+  .browser-dot.y { background: #ffbd2e; }
+  .browser-dot.g { background: #28c840; }
+  .browser-url {
+    flex: 1; background: #fff; border-radius: 4px;
+    padding: 4px 10px; font-family: ui-monospace, monospace;
+    font-size: 12px; color: var(--ink-soft); margin-left: 16px;
+  }
+  .browser-content { padding: 24px; min-height: 120px; }
+
+  hr { border: none; border-top: 1px solid var(--line); margin: 56px 0; }
+  .footer {
+    margin-top: 80px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-mute); font-size: 12px;
+    display: flex; justify-content: space-between;
+  }
+
+  .pull {
+    font-family: var(--serif); font-size: 22px;
+    line-height: 1.5; color: var(--ink);
+    border-left: 4px solid var(--accent);
+    padding: 12px 0 12px 24px; margin: 32px 0;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="kicker">支线 · 第一层 · 入门</div>
+  <h1>什么是 MV3 浏览器扩展</h1>
+  <p class="subtitle">从"它和网站、App 有什么区别"开始，把 Chrome MV3 扩展的<strong>心智模型</strong>搭起来。这一层不写一行代码，只解释"它是什么、为什么这么设计"。</p>
+
+  <div class="meta">
+    <span>预计阅读 12–15 分钟 · 互动元素 · SVG 解剖图 · 自测</span>
+    <span>第 1 层 / 共 N 层</span>
+  </div>
+
+  <!-- ============ 1. 一句话定义 ============ -->
+  <h2><span class="num">1</span>先问一个钝钝的问题：扩展到底是个啥</h2>
+  <p class="lead">在解释 MV3 之前，得先把"浏览器扩展"这个东西本身搞清楚。它不是网站，也不是手机 App，但又像两者的混合。下面这个类比能省你很多脑力。</p>
+
+  <div class="analogy">
+    <div class="icon">🔌</div>
+    <div>
+      <h3>浏览器扩展 ≈ 给浏览器装的一个外接零件</h3>
+      <p>网站是<strong>客人</strong>——你随便打开一个，看完就走，浏览器对它有严格防备。<br>
+      App 是<strong>独立公民</strong>——它有自己的进程、自己的窗口，能动你硬盘里的文件。<br>
+      扩展是<strong>外聘员工</strong>——浏览器签了合同雇它，给它发工牌（权限），它能帮你处理网页，但只能在浏览器画的圈里活动。</p>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>能做什么</th><th>普通网站</th><th>浏览器扩展</th><th>桌面 App</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>读你正在看的网页内容</td><td class="no">不能</td><td class="yes">能（被授权时）</td><td class="no">不能</td></tr>
+      <tr><td>同时操作多个标签页</td><td class="no">不能</td><td class="yes">能</td><td class="no">不能</td></tr>
+      <tr><td>跨域请求任意 URL</td><td class="no">受 CORS 限制</td><td class="yes">能（声明权限后）</td><td class="yes">能</td></tr>
+      <tr><td>注册全局快捷键</td><td class="no">不能</td><td class="yes">能</td><td class="yes">能</td></tr>
+      <tr><td>读写本地任意文件</td><td class="no">不能</td><td class="no">不能</td><td class="yes">能</td></tr>
+      <tr><td>关闭浏览器后还能跑</td><td class="no">不能</td><td class="no">不能</td><td class="yes">能</td></tr>
+    </tbody>
+  </table>
+
+  <p>所以扩展的能力<strong>恰好夹在网站和 App 之间</strong>：比网站强，但还在浏览器的管辖之内。它不能逃出浏览器、不能动你硬盘——这是它能被信任地装进千万人电脑里的前提。</p>
+
+  <!-- ============ 2. 浏览器解剖 ============ -->
+  <h2><span class="num">2</span>浏览器解剖图：扩展住在哪里</h2>
+  <p class="lead">下面这张图把一个 Chrome 浏览器从外向内拆成五层。<strong>扩展同时住在好几层里</strong>——这是它最反直觉的地方，也是 MV3 心智模型的起点。</p>
+
+  <div class="browser-anatomy">
+    <svg viewBox="0 0 800 420" xmlns="http://www.w3.org/2000/svg">
+      <!-- 外壳 -->
+      <rect x="20" y="20" width="760" height="380" rx="14" fill="#fafaf8" stroke="#c9c9c1" stroke-width="2"/>
+      <text x="36" y="46" font-family="ui-monospace, monospace" font-size="11" fill="#8a8a8a">CHROME 浏览器进程</text>
+
+      <!-- 工具栏 -->
+      <rect x="40" y="60" width="720" height="44" rx="6" fill="#f0f0ec" stroke="#d4d4cc"/>
+      <circle cx="60" cy="82" r="6" fill="#ff5f57"/>
+      <circle cx="78" cy="82" r="6" fill="#ffbd2e"/>
+      <circle cx="96" cy="82" r="6" fill="#28c840"/>
+      <rect x="120" y="72" width="500" height="20" rx="4" fill="#fff" stroke="#d4d4cc"/>
+      <text x="130" y="86" font-family="ui-monospace, monospace" font-size="11" fill="#666">https://example.com</text>
+      <!-- 扩展图标 -->
+      <rect x="640" y="68" width="28" height="28" rx="5" fill="#7c3aed" stroke="#5b21b6" stroke-width="2" class="ext-mark"/>
+      <text x="654" y="86" font-family="ui-monospace, monospace" font-size="13" fill="#fff" text-anchor="middle">★</text>
+      <text x="654" y="118" font-family="ui-monospace, monospace" font-size="9" fill="#7c3aed" text-anchor="middle">扩展图标</text>
+
+      <!-- 标签页 -->
+      <rect x="40" y="130" width="430" height="250" rx="6" fill="#fff" stroke="#d4d4cc"/>
+      <text x="56" y="152" font-family="ui-monospace, monospace" font-size="10" fill="#8a8a8a">渲染进程 · 当前标签页</text>
+      <rect x="56" y="166" width="398" height="100" rx="4" fill="#fafaf8" stroke="#e2e2dd"/>
+      <text x="65" y="186" font-family="serif" font-size="14" fill="#1a1a1a">网页内容（DOM）</text>
+      <text x="65" y="206" font-family="sans-serif" font-size="11" fill="#666">这里是 example.com 自己的 JS / HTML / CSS</text>
+      <text x="65" y="222" font-family="sans-serif" font-size="11" fill="#666">网页能看见自己的全部，但看不到扩展。</text>
+
+      <!-- Content Script 注入 -->
+      <rect x="56" y="280" width="398" height="80" rx="4" fill="#eef4ff" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 3"/>
+      <text x="65" y="300" font-family="ui-monospace, monospace" font-size="10" fill="#2563eb" font-weight="700">CONTENT SCRIPT（扩展注入）</text>
+      <text x="65" y="320" font-family="sans-serif" font-size="11" fill="#1a1a1a">能读 DOM、能改 DOM</text>
+      <text x="65" y="336" font-family="sans-serif" font-size="11" fill="#666">和网页住同一进程，但活在<strong>隔离世界</strong>里</text>
+      <text x="65" y="352" font-family="sans-serif" font-size="11" fill="#666">网页里的变量它看不见，反之亦然</text>
+
+      <!-- Service Worker -->
+      <rect x="490" y="130" width="270" height="120" rx="6" fill="#1a1a1a"/>
+      <text x="506" y="152" font-family="ui-monospace, monospace" font-size="10" fill="#aaa">SERVICE WORKER 进程</text>
+      <text x="506" y="178" font-family="ui-monospace, monospace" font-size="11" fill="#fde68a" font-weight="700">background.js</text>
+      <text x="506" y="200" font-family="sans-serif" font-size="11" fill="#e0e0d8">扩展的"大脑"</text>
+      <text x="506" y="218" font-family="sans-serif" font-size="11" fill="#bbb">能跨域请求</text>
+      <text x="506" y="234" font-family="sans-serif" font-size="11" fill="#bbb">看不到网页 DOM</text>
+
+      <!-- Extension Pages -->
+      <rect x="490" y="265" width="270" height="115" rx="6" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+      <text x="506" y="287" font-family="ui-monospace, monospace" font-size="10" fill="#059669" font-weight="700">EXTENSION PAGES</text>
+      <text x="506" y="307" font-family="sans-serif" font-size="11" fill="#1a1a1a">popup / options / 独立页面</text>
+      <text x="506" y="324" font-family="sans-serif" font-size="11" fill="#4a4a4a">点扩展图标弹出的小窗口</text>
+      <text x="506" y="340" font-family="sans-serif" font-size="11" fill="#4a4a4a">设置页（chrome-extension://...）</text>
+      <text x="506" y="358" font-family="sans-serif" font-size="11" fill="#4a4a4a">关掉就没了</text>
+
+      <!-- 连接线 -->
+      <path d="M454 320 Q470 320 480 280 Q488 250 488 200" stroke="#ea580c" stroke-width="2" fill="none" stroke-dasharray="4 3"/>
+      <circle cx="488" cy="200" r="4" fill="#ea580c"/>
+      <circle cx="454" cy="320" r="4" fill="#ea580c"/>
+      <text x="478" y="270" font-family="ui-monospace, monospace" font-size="9" fill="#ea580c" transform="rotate(-30 478 270)">消息通信</text>
+
+      <path d="M624 200 Q700 200 700 280 Q700 320 654 320" stroke="#ea580c" stroke-width="2" fill="none" stroke-dasharray="4 3"/>
+      <circle cx="624" cy="200" r="4" fill="#ea580c"/>
+      <circle cx="654" cy="320" r="4" fill="#ea580c"/>
+    </svg>
+    <div class="anatomy-key">
+      <div class="row"><span class="swatch" style="background: #1a1a1a;"></span><div><strong>Service Worker</strong><span>扩展的后台大脑，单独进程</span></div></div>
+      <div class="row"><span class="swatch" style="background: #2563eb;"></span><div><strong>Content Script</strong><span>注入到网页里的"耳目"</span></div></div>
+      <div class="row"><span class="swatch" style="background: #059669;"></span><div><strong>Extension Pages</strong><span>扩展自己的 HTML 页面</span></div></div>
+      <div class="row"><span class="swatch" style="background: #7c3aed;"></span><div><strong>工具栏图标</strong><span>用户唯一直接接触的入口</span></div></div>
+      <div class="row"><span class="swatch" style="background: #ea580c;"></span><div><strong>消息通道</strong><span>三个世界之间唯一的连接</span></div></div>
+      <div class="row"><span class="swatch" style="background: #fafaf8; border: 1px solid #c9c9c1;"></span><div><strong>网页本身</strong><span>example.com 的内容，跟扩展无关</span></div></div>
+    </div>
+  </div>
+
+  <p class="pull">一个扩展不是"一个进程"，而是<strong>同时存在于多个进程的一组协作者</strong>。理解这一点，是 MV3 入门最大的台阶。</p>
+
+  <!-- ============ 3. 三个世界详解 ============ -->
+  <h2><span class="num">3</span>三个世界：能力与限制</h2>
+  <p class="lead">把上面那张图压缩一下：扩展永远活在三类地方。每类地方都有自己的"超能力"和"残疾"——它们恰好互补，所以才必须协作。</p>
+
+  <div class="worlds">
+    <div class="world bg">
+      <span class="tag">BACKGROUND</span>
+      <h4>后台 · Service Worker</h4>
+      <div class="where">独立进程</div>
+      <ul>
+        <li>调远程 API（任何域名）</li>
+        <li>响应快捷键、扩展图标点击</li>
+        <li>在标签页之间共享状态</li>
+        <li>定时任务（alarms）</li>
+      </ul>
+      <span class="can">✓ 能跨域 fetch 任何 URL</span><br>
+      <span class="cant">✗ 看不到任何网页的 DOM</span><br>
+      <span class="cant">✗ 几十秒不活跃就被杀</span>
+    </div>
+    <div class="world cs">
+      <span class="tag">CONTENT</span>
+      <h4>页面 · Content Script</h4>
+      <div class="where">注入到网页进程</div>
+      <ul>
+        <li>读写当前页面的 DOM</li>
+        <li>响应页面事件（鼠标、滚动）</li>
+        <li>给页面加 UI（如悬浮球）</li>
+      </ul>
+      <span class="can">✓ 能改当前网页的内容</span><br>
+      <span class="cant">✗ 不能跨域请求</span><br>
+      <span class="cant">✗ 看不到页面里的 JS 变量</span>
+    </div>
+    <div class="world ui">
+      <span class="tag">UI PAGES</span>
+      <h4>扩展页面 · Popup / Options</h4>
+      <div class="where">独立 HTML 页面</div>
+      <ul>
+        <li>普通的网页，但跑在扩展环境里</li>
+        <li>点击图标弹出的小窗</li>
+        <li>设置页、调试页等</li>
+      </ul>
+      <span class="can">✓ 普通网页能干的都行</span><br>
+      <span class="cant">✗ 关掉窗口就没了</span><br>
+      <span class="cant">✗ 不能直接读其他网页的 DOM</span>
+    </div>
+  </div>
+
+  <h3>为什么要分得这么细？</h3>
+  <p>因为浏览器要解决一个矛盾：<strong>扩展需要能力，但不能滥用能力</strong>。</p>
+  <p>如果让 content script 也能跨域请求，那任何网页里的恶意代码都可能利用扩展的密钥发请求。如果让 service worker 直接动 DOM，那它就能在你完全不察觉的情况下改写银行网站的内容。所以浏览器把"可以读网页"和"可以联网"<strong>故意拆到不同进程</strong>，要协作就必须显式发消息——这一拆，攻击面就小了一大圈。</p>
+
+  <!-- ============ 4. 互动：消息传递 ============ -->
+  <h2><span class="num">4</span>互动演示：消息怎么在三个世界之间跳</h2>
+  <p class="lead">三个世界之间不能直接调用对方的函数。它们必须通过 <code>chrome.runtime</code> 这个邮局发<strong>消息</strong>。下面这个小演示模拟一次"用户点了 Popup 里的按钮 → 后台调 LLM → 把结果显示到网页面板上"的过程。</p>
+
+  <div class="message-demo">
+    <div class="demo-stage" id="demoStage">
+      <div class="demo-zone ui">
+        <span class="label">UI · POPUP</span>
+        <div class="target">🪟</div>
+      </div>
+      <div class="demo-zone bg">
+        <span class="label">BACKGROUND</span>
+        <div class="target">🧠</div>
+      </div>
+      <div class="demo-zone cs">
+        <span class="label">CONTENT</span>
+        <div class="target">📄</div>
+      </div>
+      <div class="pkt" id="pkt" style="display: none;">📨</div>
+    </div>
+    <div class="demo-controls">
+      <button class="primary" id="demoPlay">▶ 播放完整流程</button>
+      <button id="demoStep">单步推进</button>
+      <button id="demoReset">重置</button>
+    </div>
+    <div class="demo-log" id="demoLog">点击"播放完整流程"开始演示</div>
+  </div>
+
+  <p>看到了吗？哪怕是最简单的"用户点按钮 → 调 API → 显示结果"，<strong>消息至少要跳 4 次</strong>。这就是为什么扩展开发比写普通网页麻烦——你写的不是一段顺序代码，而是一组分布在不同地方的事件处理器，靠消息把它们串起来。</p>
+
+  <!-- ============ 5. 文件结构 ============ -->
+  <h2><span class="num">5</span>一个扩展长什么样：文件结构</h2>
+  <p class="lead">所有 MV3 扩展，从最简单到最复杂，都遵循同一种基本骨架。打开一个扩展的源码，你大概率会看到下面这样的目录。</p>
+
+  <div class="filetree">
+my-extension/
+├── <span class="req">manifest.json</span>          <span class="comment"># ★ 必须有，扩展的"身份证"</span>
+├── <span class="file">background.js</span>          <span class="comment"># Service Worker（大脑）</span>
+├── <span class="file">content.js</span>             <span class="comment"># Content Script（注入网页的耳目）</span>
+├── <span class="dir">popup/</span>
+│   ├── <span class="file">popup.html</span>        <span class="comment"># 点图标弹出的小窗</span>
+│   ├── <span class="file">popup.js</span>
+│   └── <span class="file">popup.css</span>
+├── <span class="dir">options/</span>
+│   ├── <span class="file">options.html</span>      <span class="comment"># 设置页（独立 tab 打开）</span>
+│   └── <span class="file">options.js</span>
+├── <span class="dir">icons/</span>
+│   └── <span class="file">icon128.png</span>       <span class="comment"># 工具栏 / 商店里显示的图标</span>
+└── <span class="dir">_locales/</span>             <span class="comment"># 多语言（可选）</span>
+    └── <span class="dir">zh_CN/messages.json</span>
+  </div>
+
+  <p>红色的 <code>manifest.json</code> 是<strong>唯一必须有的文件</strong>——它就像扩展的身份证 + 雇佣合同，告诉浏览器：</p>
+  <ul>
+    <li>我叫什么、什么版本</li>
+    <li>我要哪些权限（要不要读所有网页？要不要操作 cookie？）</li>
+    <li>我的后台脚本是哪一个</li>
+    <li>我要往哪些网址注入 content script</li>
+    <li>我的图标和设置页在哪</li>
+  </ul>
+  <p>其它所有 JS / HTML / CSS / 图片，本质上都是 <code>manifest.json</code> 里被引用到的"零件"。<strong>没有 manifest 的一堆文件，浏览器不认。</strong></p>
+
+  <!-- ============ 6. 权限模型 ============ -->
+  <h2><span class="num">6</span>权限模型：你被授权了什么</h2>
+  <p class="lead">扩展要做事，得先在 manifest 里"申报"自己要什么权限。安装时浏览器会把这些权限以人话告诉用户。下面是常见权限按"危险等级"分的三档。</p>
+
+  <div class="perm-grid">
+    <div class="perm low">
+      <span class="level">LOW · 低风险</span>
+      <h4>storage</h4>
+      <p>能用 <code>chrome.storage</code> 存自己的几 MB 数据。安装时浏览器不会特别警告。</p>
+    </div>
+    <div class="perm low">
+      <span class="level">LOW · 低风险</span>
+      <h4>alarms</h4>
+      <p>能注册定时任务，类似 setTimeout 但 service worker 死了也能唤醒。</p>
+    </div>
+    <div class="perm low">
+      <span class="level">LOW · 低风险</span>
+      <h4>notifications</h4>
+      <p>能弹系统通知。</p>
+    </div>
+    <div class="perm mid">
+      <span class="level">MID · 需提示</span>
+      <h4>activeTab</h4>
+      <p>用户主动点击扩展图标时，授权它读当前这一个标签页。比下面那个 <code>tabs</code> 安全得多。</p>
+    </div>
+    <div class="perm mid">
+      <span class="level">MID · 需提示</span>
+      <h4>tabs</h4>
+      <p>能查询所有打开的标签页（标题、URL）。能拿到你浏览历史的快照，所以浏览器会警告。</p>
+    </div>
+    <div class="perm mid">
+      <span class="level">MID · 需提示</span>
+      <h4>scripting</h4>
+      <p>动态地往任意页面注入脚本。MV3 里很多扩展都需要它。</p>
+    </div>
+    <div class="perm high">
+      <span class="level">HIGH · 强警告</span>
+      <h4>&lt;all_urls&gt;</h4>
+      <p>声明 host_permissions 为所有网站，意味着你能读取和修改用户访问的<strong>任何网页</strong>。安装时会弹巨大的警告框。</p>
+    </div>
+    <div class="perm high">
+      <span class="level">HIGH · 强警告</span>
+      <h4>cookies</h4>
+      <p>能读写用户的所有 cookies。这等于能拿登录态，所以是高敏。</p>
+    </div>
+    <div class="perm high">
+      <span class="level">HIGH · 强警告</span>
+      <h4>webRequest</h4>
+      <p>能拦截、修改网络请求。功能极强，也是恶意扩展最爱的权限。</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">为什么用户应该看权限</h3>
+    <p>很多人安装扩展时随手点"添加"。但<strong>权限就是合同</strong>——你装一个声明了 <code>&lt;all_urls&gt;</code> 和 <code>cookies</code> 的扩展，等于给它你浏览器里所有登录态的副本。所以一个良好的扩展会尽量声明<strong>最小权限集</strong>，比如优先用 <code>activeTab</code> 而不是 <code>tabs</code>。</p>
+  </div>
+
+  <!-- ============ 7. 生命周期 ============ -->
+  <h2><span class="num">7</span>生命周期：service worker 不是常驻进程</h2>
+  <p class="lead">这是 MV3 最反直觉、也最容易让初学者踩坑的事实——<strong>你的后台脚本随时会被浏览器杀掉</strong>。它不是 MV2 那种长期开着的页面。</p>
+
+  <div class="timeline">
+    <div class="timeline-track">
+      <div class="tl-bar">
+        <div class="tl-segment alive" style="left: 0%; width: 18%;"></div>
+        <div class="tl-segment dead" style="left: 18%; width: 22%;"></div>
+        <div class="tl-segment alive" style="left: 40%; width: 12%;"></div>
+        <div class="tl-segment dead" style="left: 52%; width: 30%;"></div>
+        <div class="tl-segment alive" style="left: 82%; width: 18%;"></div>
+      </div>
+      <!-- 事件 -->
+      <div class="tl-event" style="left: 0%;">用户安装</div>
+      <div class="tl-event" style="left: 18%;">空闲 30s</div>
+      <div class="tl-event" style="left: 40%;">收到消息</div>
+      <div class="tl-event" style="left: 52%;">空闲 30s</div>
+      <div class="tl-event" style="left: 82%;">快捷键触发</div>
+      <!-- 注释 -->
+      <div class="tl-note" style="left: 9%; color: var(--ok);"><strong>启动</strong>初始化完成，监听消息</div>
+      <div class="tl-note" style="left: 29%; color: var(--ink-mute);"><strong>休眠</strong>没人理它，被浏览器杀掉，内存里的变量全没</div>
+      <div class="tl-note" style="left: 46%; color: var(--ok);"><strong>复活</strong>有事件来了，重新启动</div>
+      <div class="tl-note" style="left: 67%; color: var(--ink-mute);"><strong>再次休眠</strong>之前的状态全丢，但 chrome.storage 里的还在</div>
+      <div class="tl-note" style="left: 91%; color: var(--ok);"><strong>再启动</strong></div>
+    </div>
+    <div class="legend">
+      <span><i style="background: var(--ok);"></i> 运行中</span>
+      <span><i style="background: #d4d4cc;"></i> 已被杀死</span>
+    </div>
+  </div>
+
+  <h3>这意味着什么</h3>
+  <div class="grid-2">
+    <div class="card" style="margin: 0;">
+      <h4 style="margin-top: 0;">🚫 不能做的</h4>
+      <ul>
+        <li>在 background.js 里用全局变量保存重要状态</li>
+        <li>用 <code>setInterval</code> 跑常驻轮询</li>
+        <li>假设"上次写过的变量这次还在"</li>
+      </ul>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h4 style="margin-top: 0;">✅ 应该做的</h4>
+      <ul>
+        <li>状态写进 <code>chrome.storage</code></li>
+        <li>定时任务用 <code>chrome.alarms</code></li>
+        <li>每次脚本启动都重新订阅事件监听器</li>
+      </ul>
+    </div>
+  </div>
+
+  <p>Google 这么设计的理由是：<strong>省内存</strong>。MV2 时代每个扩展都常驻一个后台页面，开 50 个扩展就是 50 个隐藏 tab 在吃内存。MV3 改成事件驱动后，扩展只在真正有事的时候才占资源。代价就是开发者必须接受"我的代码随时会从头跑一遍"。</p>
+
+  <!-- ============ 8. MV2 vs MV3 ============ -->
+  <h2><span class="num">8</span>MV2 vs MV3：到底改了什么</h2>
+  <p class="lead">你会在网上看到大量"为什么 MV3 这么糟"的抱怨。这一节快速给你交底——只看两个版本最关键的差异，不站队。</p>
+
+  <div class="versus">
+    <div class="versus-side">
+      <h4>MV2 · 旧时代</h4>
+      <div class="when">2012 – 2024</div>
+      <ul>
+        <li>后台是一个<strong>常驻 HTML 页面</strong>，永远活着</li>
+        <li>能用 <code>webRequest</code> <strong>阻塞修改</strong>网络请求（强力广告拦截器靠这个）</li>
+        <li>能远程加载并执行任意 JS 代码</li>
+        <li>权限审核相对宽松</li>
+      </ul>
+    </div>
+    <div class="versus-arrow">→</div>
+    <div class="versus-side">
+      <h4>MV3 · 现行</h4>
+      <div class="when">2021 – 至今</div>
+      <ul>
+        <li>后台改成 <strong>Service Worker</strong>，事件驱动、随时被杀</li>
+        <li><code>webRequest</code> 阻塞模式废除，广告拦截改用 <code>declarativeNetRequest</code>（只能按预定规则匹配）</li>
+        <li>所有代码必须打包进扩展，不能远程加载</li>
+        <li>更严的权限审核和 CSP</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">争议的核心是什么</h3>
+    <p>Google 说：MV3 让扩展<strong>更省内存、更安全、更难作恶</strong>。<br>
+    批评者说：MV3 顺便<strong>削弱了 uBlock Origin 这类强力广告拦截器</strong>，而 Google 自己卖广告，所以这"碰巧"利好 Google 的广告业务。</p>
+    <p>对你这一层来说<strong>不重要</strong>。你只需要知道：MV3 是 Chrome 当前唯一支持的扩展版本，所以新写扩展只能用 MV3。本项目（PageLens AI）的 manifest 里写着 <code>"manifest_version": 3</code>，这就是它身处的时代。</p>
+  </div>
+
+  <!-- ============ 9. 拟态：用户视角 ============ -->
+  <h2><span class="num">9</span>从用户视角再看一次</h2>
+  <p class="lead">前面都是从内部看扩展。换个角度——一个普通用户实际能感知到扩展的，就只有下面这几个表面。</p>
+
+  <div class="grid-2">
+    <div>
+      <h3>① 工具栏图标</h3>
+      <div class="browser-mock">
+        <div class="browser-bar">
+          <span class="browser-dot r"></span><span class="browser-dot y"></span><span class="browser-dot g"></span>
+          <span class="browser-url">https://example.com</span>
+          <span style="background: #7c3aed; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-left: 8px;">★</span>
+        </div>
+        <div class="browser-content" style="font-size: 13px; color: var(--ink-soft);">
+          点击图标 → 弹出 popup<br>右键图标 → 进入 options
+        </div>
+      </div>
+    </div>
+    <div>
+      <h3>② 网页里多出来的元素</h3>
+      <div class="browser-mock">
+        <div class="browser-bar">
+          <span class="browser-dot r"></span><span class="browser-dot y"></span><span class="browser-dot g"></span>
+          <span class="browser-url">https://news.ycombinator.com</span>
+        </div>
+        <div class="browser-content" style="font-size: 13px; color: var(--ink-soft); position: relative; min-height: 100px;">
+          网页内容...<br>
+          网页内容...<br>
+          <div style="position: absolute; right: 16px; bottom: 16px; width: 36px; height: 36px; background: var(--accent); border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center;">★</div>
+        </div>
+      </div>
+      <p style="font-size: 13px; margin-top: 8px;">悬浮球、侧边栏、高亮——都是 content script 干的。</p>
+    </div>
+    <div>
+      <h3>③ 全局快捷键</h3>
+      <div class="card" style="margin: 0;">
+        <p style="margin: 0; font-size: 13px;">按 <code>Cmd+Shift+K</code> 这种组合键，浏览器把事件转给扩展的 background。<br><br>本项目就是这么打开侧边面板的。</p>
+      </div>
+    </div>
+    <div>
+      <h3>④ 安装时的权限对话框</h3>
+      <div class="card" style="margin: 0;">
+        <p style="margin: 0; font-size: 13px;">"该扩展希望<strong>读取并更改你访问的所有网站上的数据</strong>。"<br><br>这句话直接来自 manifest 里声明的 <code>host_permissions</code>。</p>
+      </div>
+    </div>
+  </div>
+
+  <p style="margin-top: 24px;">用户能感知的就这四个面。<strong>其它一切——三个世界、消息通信、生命周期——都在水面之下</strong>，是开发者必须搞懂的暗流。</p>
+
+  <!-- ============ 10. 自测 ============ -->
+  <h2><span class="num">10</span>自测：选项点一下能看答案</h2>
+  <p class="lead">不要查，凭刚才看完的印象选。选错了不要紧——错的地方就是值得回头再看的章节。</p>
+
+  <div class="quiz" id="quiz">
+
+    <div class="qbox" data-correct="2">
+      <div class="q"><span class="qn">Q1</span><span>一个 MV3 扩展<strong>必须</strong>包含哪个文件？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">background.js</div>
+        <div class="opt" data-i="1">content.js</div>
+        <div class="opt" data-i="2">manifest.json</div>
+        <div class="opt" data-i="3">popup.html</div>
+      </div>
+      <div class="answer">只有 <code>manifest.json</code> 是必须的。其它脚本都是 manifest 引用到的"零件"，没引用就不存在。</div>
+    </div>
+
+    <div class="qbox" data-correct="1">
+      <div class="q"><span class="qn">Q2</span><span>用户访问 <code>example.com</code>，扩展要读这个页面的 H1 标题。这件事应该谁来做？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">Service Worker（background.js）</div>
+        <div class="opt" data-i="1">Content Script（content.js）</div>
+        <div class="opt" data-i="2">Popup 页面</div>
+        <div class="opt" data-i="3">Options 页面</div>
+      </div>
+      <div class="answer">只有 content script 能直接读页面 DOM。其它三个都没有访问网页 DOM 的能力。</div>
+    </div>
+
+    <div class="qbox" data-correct="0">
+      <div class="q"><span class="qn">Q3</span><span>扩展要调用 OpenAI 的 API（<code>api.openai.com</code>），这件事应该谁来做？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">Service Worker（background.js）</div>
+        <div class="opt" data-i="1">Content Script（content.js）</div>
+        <div class="opt" data-i="2">谁都行，没区别</div>
+        <div class="opt" data-i="3">网页本身</div>
+      </div>
+      <div class="answer">跨域请求必须放在后台。Content script 受 CORS 限制，跨域请求大概率被拒。</div>
+    </div>
+
+    <div class="qbox" data-correct="2">
+      <div class="q"><span class="qn">Q4</span><span>下面哪种做法在 MV3 里<strong>会出问题</strong>？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">把用户配置存进 <code>chrome.storage</code></div>
+        <div class="opt" data-i="1">在 service worker 里监听快捷键</div>
+        <div class="opt" data-i="2">在 service worker 顶层用一个全局变量保存登录状态</div>
+        <div class="opt" data-i="3">在 content script 里给页面加一个悬浮球</div>
+      </div>
+      <div class="answer">Service worker 随时会被杀掉，全局变量不可靠。状态必须落到 <code>chrome.storage</code>。</div>
+    </div>
+
+    <div class="qbox" data-correct="3">
+      <div class="q"><span class="qn">Q5</span><span>"扩展要读取并更改你访问的所有网站上的数据"——这条警告对应 manifest 里的什么声明？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">"permissions": ["storage"]</div>
+        <div class="opt" data-i="1">"action": { ... }</div>
+        <div class="opt" data-i="2">"background": { "service_worker": "..." }</div>
+        <div class="opt" data-i="3">"host_permissions": ["&lt;all_urls&gt;"]</div>
+      </div>
+      <div class="answer">这条警告专门由 host_permissions 触发，表示扩展能在哪些域名上注入脚本和发请求。</div>
+    </div>
+
+  </div>
+
+  <hr />
+
+  <h2 style="margin-top: 0;">下一层会讲什么</h2>
+  <div class="grid-3">
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第二层 · 通信细节</h3>
+      <p>三种消息类型（runtime.sendMessage、tabs.sendMessage、Port 长连接）分别什么时候用？为什么大文件传输要用流式？</p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第三层 · 生命周期实战</h3>
+      <p>service worker 死而复生时哪些东西会丢？怎么用 <code>chrome.storage</code> + 启动时复原状态？多 tab 并发会话怎么互不干扰？</p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第四层 · 安全模型</h3>
+      <p>隔离世界到底怎么隔离？CSP 限制了什么？为什么扩展不能动 <code>document.cookie</code>？为什么要禁止远程代码？</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>MV3 扩展教程 · 第一层 · 入门</span>
+    <span>diagrams/mv3-tutorial-level-1.html</span>
+  </div>
+
+</div>
+
+<script>
+  // ===== 消息传递演示 =====
+  const stage = document.getElementById('demoStage');
+  const pkt = document.getElementById('pkt');
+  const log = document.getElementById('demoLog');
+  const btnPlay = document.getElementById('demoPlay');
+  const btnStep = document.getElementById('demoStep');
+  const btnReset = document.getElementById('demoReset');
+
+  // 三个区域中心横向位置（百分比）
+  const positions = {
+    ui: '16.66%',
+    bg: '50%',
+    cs: '83.33%'
+  };
+
+  const steps = [
+    { from: null, to: 'ui', text: '① 用户在 Popup 里点了"提问"按钮', emoji: '🪟', color: '#059669' },
+    { from: 'ui', to: 'bg', text: '② Popup 通过 chrome.runtime.sendMessage 把问题发给后台', emoji: '📨', color: '#ea580c' },
+    { from: null, to: 'bg', text: '③ 后台拼好 prompt，开始 fetch OpenAI', emoji: '🌐', color: '#1a1a1a' },
+    { from: 'bg', to: 'cs', text: '④ 后台拿到答案，通过 chrome.tabs.sendMessage 发给 content script', emoji: '📨', color: '#ea580c' },
+    { from: null, to: 'cs', text: '⑤ Content script 把答案渲染到网页上的面板里', emoji: '✨', color: '#2563eb' }
+  ];
+
+  let stepIdx = 0;
+
+  function setLog(text, color = '#4a4a4a') {
+    log.style.color = color;
+    log.textContent = text;
+  }
+
+  function renderStep(i) {
+    if (i >= steps.length) return;
+    const s = steps[i];
+    if (s.from && s.to && s.from !== s.to) {
+      // 移动包裹
+      pkt.style.display = 'flex';
+      pkt.textContent = s.emoji;
+      pkt.style.background = s.color;
+      pkt.style.left = positions[s.from];
+      // 强制重排再设新位置
+      void pkt.offsetWidth;
+      pkt.style.left = positions[s.to];
+    } else {
+      // 同一区域内动作，包裹闪一下
+      pkt.style.display = 'flex';
+      pkt.textContent = s.emoji;
+      pkt.style.background = s.color;
+      pkt.style.left = positions[s.to];
+    }
+    setLog(s.text);
+  }
+
+  function reset() {
+    stepIdx = 0;
+    pkt.style.display = 'none';
+    setLog('已重置。点击"播放完整流程"或"单步推进"开始。');
+  }
+
+  btnPlay.addEventListener('click', () => {
+    reset();
+    let i = 0;
+    const tick = () => {
+      if (i >= steps.length) {
+        setTimeout(() => setLog('✓ 演示结束。一次问答跨越了 5 个阶段、4 次世界跳转。', '#059669'), 800);
+        return;
+      }
+      renderStep(i);
+      i++;
+      setTimeout(tick, 1300);
+    };
+    tick();
+  });
+
+  btnStep.addEventListener('click', () => {
+    if (stepIdx >= steps.length) {
+      setLog('已经播放完所有步骤。点击"重置"重来。', '#059669');
+      return;
+    }
+    renderStep(stepIdx);
+    stepIdx++;
+  });
+
+  btnReset.addEventListener('click', reset);
+
+  // ===== 自测交互 =====
+  document.querySelectorAll('.qbox').forEach(box => {
+    const correct = parseInt(box.dataset.correct);
+    box.querySelectorAll('.opt').forEach(opt => {
+      opt.addEventListener('click', () => {
+        if (box.classList.contains('answered')) return;
+        const i = parseInt(opt.dataset.i);
+        if (i === correct) {
+          opt.classList.add('correct');
+        } else {
+          opt.classList.add('wrong');
+          // 也高亮正确项
+          box.querySelector(`.opt[data-i="${correct}"]`).classList.add('correct');
+        }
+        box.classList.add('answered');
+      });
+    });
+  });
+
+  // ===== 解剖图 key 联动 =====
+  document.querySelectorAll('.anatomy-key .row').forEach(row => {
+    row.addEventListener('click', () => {
+      row.style.background = '#1a1a1a';
+      row.style.color = '#fff';
+      setTimeout(() => {
+        row.style.background = '';
+        row.style.color = '';
+      }, 600);
+    });
+  });
+</script>
+</body>
+</html>

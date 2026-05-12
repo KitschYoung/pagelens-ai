@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>PageLens AI · 框架结构 · 第二层 · 通信协议</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-mute: #8a8a8a;
+    --line: #e2e2dd;
+    --line-strong: #c9c9c1;
+    --paper: #ffffff;
+    --accent: #2563eb;
+    --accent-soft: #eef4ff;
+    --warn: #ea580c;
+    --warn-soft: #fff4ec;
+    --ok: #059669;
+    --ok-soft: #ecfdf5;
+    --pink: #db2777;
+    --pink-soft: #fdf2f8;
+    --purple: #7c3aed;
+    --purple-soft: #f3eeff;
+    --serif: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", Georgia, serif;
+    --sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1080px; margin: 0 auto; padding: 64px 32px 120px; }
+  .kicker {
+    font-size: 12px; letter-spacing: 0.18em; color: var(--ink-mute);
+    text-transform: uppercase; margin-bottom: 12px;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 600;
+    font-size: 44px; line-height: 1.2; margin: 0 0 16px;
+    letter-spacing: -0.01em;
+  }
+  .subtitle { font-size: 17px; color: var(--ink-soft); max-width: 720px; }
+  .meta {
+    color: var(--ink-mute); font-size: 13px;
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 10px 0; margin: 32px 0 56px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+  }
+  h2 {
+    font-family: var(--serif); font-weight: 600; font-size: 28px;
+    margin: 80px 0 8px; letter-spacing: -0.005em;
+  }
+  h2 .num { color: var(--ink-mute); font-weight: 400; margin-right: 10px; }
+  h3 {
+    font-family: var(--serif); font-weight: 600; font-size: 19px;
+    margin: 28px 0 10px;
+  }
+  .lead { font-size: 16px; color: var(--ink-soft); margin: 0 0 24px; max-width: 760px; }
+  p { margin: 0 0 14px; }
+  code {
+    font-family: var(--mono);
+    font-size: 13px; background: #ececea; padding: 1px 6px; border-radius: 4px;
+  }
+  .card {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 24px 28px; margin: 16px 0;
+  }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .container { padding: 40px 20px 80px; }
+    h1 { font-size: 32px; }
+  }
+
+  .pull {
+    font-family: var(--serif); font-size: 22px;
+    line-height: 1.5; color: var(--ink);
+    border-left: 4px solid var(--accent);
+    padding: 12px 0 12px 24px; margin: 32px 0;
+    font-weight: 500;
+  }
+
+  /* ===== 通信对照（一次性 vs 长连接）===== */
+  .comm-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+  .comm {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 10px; padding: 22px; position: relative;
+  }
+  .comm.oneshot { border-top: 4px solid var(--accent); }
+  .comm.port { border-top: 4px solid var(--pink); }
+  .comm h4 { margin: 0 0 4px; font-family: var(--serif); font-size: 18px; }
+  .comm .api {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--ink-mute); margin-bottom: 14px;
+  }
+  .comm ul { padding-left: 18px; margin: 8px 0; font-size: 13px; color: var(--ink-soft); }
+  .comm li { margin-bottom: 4px; }
+  .comm .label-row { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; margin-top: 14px; margin-bottom: 4px; }
+  .comm .label-row.ok { color: var(--ok); }
+  .comm .label-row.bad { color: var(--warn); }
+  @media (max-width: 760px) { .comm-pair { grid-template-columns: 1fr; } }
+
+  /* ===== 消息流可视化（动画）===== */
+  .pipe {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 10px; padding: 20px; margin: 16px 0;
+  }
+  .pipe-stage {
+    position: relative; display: grid; grid-template-columns: 1fr 1fr;
+    border: 1px dashed var(--line-strong); border-radius: 8px;
+    min-height: 180px; overflow: hidden;
+  }
+  .pipe-zone {
+    padding: 14px 18px; border-right: 1px dashed var(--line);
+    position: relative;
+  }
+  .pipe-zone:last-child { border-right: none; }
+  .pipe-zone .label {
+    font-size: 11px; letter-spacing: 0.1em;
+    font-family: var(--mono); color: var(--ink-mute);
+  }
+  .pipe-zone.bg { background: linear-gradient(180deg, #fafaf8 0%, #f3f3ef 100%); }
+  .pipe-zone.cs { background: linear-gradient(180deg, #fdfdfb 0%, #eef4ff 100%); }
+  .bubble {
+    position: absolute; padding: 4px 10px; border-radius: 14px;
+    font-size: 12px; font-family: var(--mono);
+    background: var(--warn); color: #fff;
+    white-space: nowrap;
+    transition: left 0.6s cubic-bezier(0.65,0,0.35,1), opacity 0.3s;
+    box-shadow: 0 4px 10px rgba(234,88,12,0.3);
+    pointer-events: none; opacity: 0;
+  }
+  .pipe-controls { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .pipe-controls button {
+    padding: 8px 16px; border: 1px solid var(--line-strong);
+    background: var(--paper); border-radius: 5px;
+    cursor: pointer; font-family: var(--sans); font-size: 13px;
+  }
+  .pipe-controls button:hover { background: #f0f0ec; }
+  .pipe-controls button.primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+  }
+  .pipe-log {
+    margin-top: 12px; font-family: var(--mono); font-size: 12px;
+    background: #fafaf8; border-radius: 5px; padding: 10px 14px;
+    color: var(--ink-soft); min-height: 40px;
+    max-height: 110px; overflow-y: auto;
+  }
+  .pipe-log .line { margin-bottom: 4px; }
+
+  /* ===== 流式接力四级火箭 ===== */
+  .relay {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 10px; padding: 28px; margin: 24px 0;
+  }
+  .relay-row {
+    display: grid; grid-template-columns: 36px 1fr 200px;
+    gap: 18px; align-items: center; padding: 14px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .relay-row:last-child { border-bottom: none; }
+  .relay-num {
+    width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--serif); font-size: 18px; font-weight: 600;
+    color: #fff;
+  }
+  .relay-num.s1 { background: #1a1a1a; }
+  .relay-num.s2 { background: var(--accent); }
+  .relay-num.s3 { background: var(--ok); }
+  .relay-num.s4 { background: var(--purple); }
+  .relay-body h4 { margin: 0 0 4px; font-size: 15px; }
+  .relay-body p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+  .relay-tag {
+    font-family: var(--mono); font-size: 11px;
+    background: #fafaf8; padding: 6px 10px; border-radius: 5px;
+    color: var(--ink-soft); border: 1px solid var(--line);
+    text-align: right;
+  }
+
+  /* ===== Provider 适配表 ===== */
+  table {
+    width: 100%; border-collapse: collapse;
+    margin: 16px 0; font-size: 13px;
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; overflow: hidden;
+  }
+  th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  th { background: #fafaf8; font-weight: 600; font-size: 12px; color: var(--ink-soft); }
+  tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: var(--mono); font-size: 12px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .pill.openai { background: #ecfdf5; color: var(--ok); }
+  .pill.claude { background: #fff4ec; color: var(--warn); }
+  .pill.gemini { background: #eef4ff; color: var(--accent); }
+  .pill.ollama { background: #f3eeff; color: var(--purple); }
+  .pill.responses { background: #fdf2f8; color: var(--pink); }
+
+  /* ===== B站抓取流程 ===== */
+  .bili-flow {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 10px; padding: 24px; margin: 24px 0;
+  }
+  .bili-step {
+    display: grid; grid-template-columns: 28px 1fr;
+    gap: 14px; padding: 12px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .bili-step:last-child { border-bottom: none; }
+  .bili-step .n {
+    width: 28px; height: 28px; border-radius: 50%;
+    background: #fb7185; color: #fff; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+  }
+  .bili-step .body h4 { margin: 0 0 2px; font-size: 14px; }
+  .bili-step .body p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+  .bili-step code { font-size: 11px; }
+
+  /* ===== PDF 特殊路径 ===== */
+  .pdf-path {
+    background: linear-gradient(135deg, #fff4ec 0%, #ffffff 100%);
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 24px; margin: 24px 0;
+  }
+  .pdf-grid {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: 18px;
+    align-items: center; margin-top: 16px;
+  }
+  .pdf-side {
+    background: var(--paper); border: 1px solid var(--line-strong);
+    border-radius: 8px; padding: 16px;
+  }
+  .pdf-side h5 { margin: 0 0 8px; font-size: 13px; color: var(--ink); }
+  .pdf-side p { margin: 0; font-size: 12px; color: var(--ink-soft); }
+  .pdf-arrow { font-size: 28px; color: var(--warn); text-align: center; }
+  @media (max-width: 760px) {
+    .pdf-grid { grid-template-columns: 1fr; }
+    .pdf-arrow { transform: rotate(90deg); }
+  }
+
+  /* ===== Slash 指令面板 mock ===== */
+  .slash-mock {
+    background: #1a1a1a; color: #f0f0ed;
+    border-radius: 10px; padding: 20px; margin: 16px 0;
+    font-family: var(--mono); font-size: 13px;
+  }
+  .slash-input {
+    background: #2a2a2a; padding: 10px 14px; border-radius: 6px;
+    border: 1px solid #3a3a3a; margin-bottom: 12px;
+  }
+  .slash-input .cursor {
+    display: inline-block; width: 7px; height: 14px;
+    background: #fde68a; vertical-align: middle;
+    animation: blink 1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .slash-list { background: #2a2a2a; border-radius: 6px; padding: 8px 0; }
+  .slash-item {
+    padding: 6px 14px; cursor: pointer;
+    display: flex; gap: 12px; align-items: center;
+    transition: background 0.1s;
+  }
+  .slash-item:hover, .slash-item.active { background: #3a3a3a; }
+  .slash-item .cmd { color: #fde68a; min-width: 110px; }
+  .slash-item .desc { color: #aaa; font-size: 12px; }
+
+  /* ===== Code 折叠示意 ===== */
+  pre.snippet {
+    background: #1a1a1a; color: #e0e0d8;
+    border-radius: 8px; padding: 18px 22px;
+    font-family: var(--mono); font-size: 12px;
+    line-height: 1.6; overflow-x: auto;
+    margin: 12px 0;
+  }
+  pre.snippet .k { color: #c084fc; }
+  pre.snippet .s { color: #fde68a; }
+  pre.snippet .c { color: #888; }
+  pre.snippet .f { color: #7dd3fc; }
+  pre.snippet .n { color: #f87171; }
+
+  /* ===== 自测 ===== */
+  .quiz { margin: 32px 0; }
+  .qbox {
+    background: var(--paper); border: 1px solid var(--line);
+    border-radius: 8px; padding: 20px 24px; margin-bottom: 12px;
+  }
+  .qbox .q {
+    font-weight: 600; margin-bottom: 12px;
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .qbox .q .qn {
+    font-family: var(--serif); font-size: 22px;
+    color: var(--ink-mute); line-height: 1;
+  }
+  .qbox .options { display: flex; flex-direction: column; gap: 6px; }
+  .qbox .opt {
+    padding: 10px 14px; border: 1px solid var(--line);
+    border-radius: 5px; cursor: pointer; font-size: 14px;
+    transition: all 0.15s; background: #fafaf8;
+  }
+  .qbox .opt:hover { background: #f0f0ec; }
+  .qbox .opt.correct { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+  .qbox .opt.wrong { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+  .qbox .answer {
+    margin-top: 12px; padding: 12px 14px;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 5px; font-size: 13px; display: none;
+  }
+  .qbox.answered .answer { display: block; }
+
+  hr { border: none; border-top: 1px solid var(--line); margin: 56px 0; }
+  .footer {
+    margin-top: 80px; padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-mute); font-size: 12px;
+    display: flex; justify-content: space-between;
+  }
+
+  .ribbon {
+    display: inline-block; padding: 4px 12px;
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 12px; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.08em; margin-right: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="kicker">主线 · 第二层 · 通信协议</div>
+  <h1>三个世界之间到底怎么对话</h1>
+  <p class="subtitle">第一层我们说"它们靠消息通信"。这一层把那些消息<strong>拆开看里面装的什么</strong>——一次性事件 vs 长连接、SSE 流式接力、5 个 LLM 适配、B 站字幕跨域、PDF 抽取、Slash 指令。这是把项目从"知道分了三个世界"升级到"看得懂数据怎么流"的一层。</p>
+
+  <div class="meta">
+    <span>预计阅读 18–22 分钟 · 互动动画 · 适配对照表 · 自测</span>
+    <span>第 2 层 / 共 N 层</span>
+  </div>
+
+  <!-- ============ 1. 邮局有两种 ============ -->
+  <h2><span class="num">1</span>邮局有两种：sendMessage 和 Port</h2>
+  <p class="lead">三个世界之间的通信不是"打电话"，而是"寄包裹"。但寄包裹有两种方式：<strong>一次性快递</strong>和<strong>长期专线</strong>。一个项目里这两种几乎总是同时使用——本项目也不例外。</p>
+
+  <div class="comm-pair">
+    <div class="comm oneshot">
+      <h4>① 一次性消息 · sendMessage</h4>
+      <div class="api">chrome.runtime.sendMessage / onMessage</div>
+      <p style="font-size: 13px; color: var(--ink-soft); margin-bottom: 12px;">
+        一发一收，自动闭合。像寄一个 EMS：寄出去、对方签收、回执回来，整个事就完了。
+      </p>
+      <div class="label-row ok">✓ 适合</div>
+      <ul>
+        <li>"切换会话模式"这种瞬间动作</li>
+        <li>"获取历史记录" / "保存设置"等请求</li>
+        <li>响应一定能在几百毫秒内拿到</li>
+      </ul>
+      <div class="label-row bad">✗ 不适合</div>
+      <ul>
+        <li>需要持续推送数据（流式输出）</li>
+        <li>响应可能要等几十秒（用户可能中途取消）</li>
+      </ul>
+    </div>
+    <div class="comm port">
+      <h4>② 长连接 · Port</h4>
+      <div class="api">chrome.runtime.connect / onConnect</div>
+      <p style="font-size: 13px; color: var(--ink-soft); margin-bottom: 12px;">
+        建立一条专线，双方可以多次互发消息，直到任何一方挂断。像装了一台对讲机：开启之后只要不关，随时能继续说。
+      </p>
+      <div class="label-row ok">✓ 适合</div>
+      <ul>
+        <li>LLM 流式输出（一条消息陆续吐 token）</li>
+        <li>用户中途要"停止生成"</li>
+        <li>需要服务端主动推送多条消息</li>
+      </ul>
+      <div class="label-row bad">✗ 不适合</div>
+      <ul>
+        <li>简单的一问一答（杀鸡用牛刀）</li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="pull">本项目的设计原则：<strong>简单查询用 sendMessage，流式生成用 Port。</strong>这是一条贯穿整个 background.js 的分工线。</p>
+
+  <div class="card">
+    <h3 style="margin-top: 0;">两条监听器在 background.js 里长什么样</h3>
+    <pre class="snippet">
+<span class="c">// 一次性消息：处理 'getHistory' / 'setChatMode' 等</span>
+<span class="f">chrome.runtime.onMessage</span>.addListener((request, sender, sendResponse) =&gt; {
+    handleRuntimeMessage(request, sender)
+        .then(sendResponse)
+        .catch(...);
+    <span class="k">return</span> <span class="s">true</span>; <span class="c">// 关键：让回调能异步</span>
+});
+
+<span class="c">// 长连接：只接受名为 'answerStream' 的连接</span>
+<span class="f">chrome.runtime.onConnect</span>.addListener((port) =&gt; {
+    <span class="k">if</span> (port.<span class="n">name</span> !== <span class="s">'answerStream'</span>) <span class="k">return</span>;
+    port.<span class="f">onMessage</span>.addListener((request) =&gt; {
+        handlePortMessage(port, request)...
+    });
+});</pre>
+    <p style="font-size: 13px; color: var(--ink-soft);">两条监听器各管一摊，互不干扰。如果第三方代码以错误的 <code>port.name</code> 来连，会被直接忽略——这是一个隐式的安全闸门。</p>
+  </div>
+
+  <!-- ============ 2. 消息格式 ============ -->
+  <h2><span class="num">2</span>消息格式：一份没写在文档里的"协议"</h2>
+  <p class="lead">扩展间消息没有强制格式，由项目自己约定。本项目用的是一种<strong>"动作 + 载荷"</strong>结构，简单但有效。</p>
+
+  <div class="grid-2">
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">一次性消息约定</h3>
+      <pre class="snippet" style="margin: 0;">{
+  <span class="s">"action"</span>: <span class="s">"getHistory"</span>,
+  <span class="s">"tabId"</span>: <span class="n">42</span>
+}
+
+<span class="c">// 回包：</span>
+{
+  <span class="s">"status"</span>: <span class="s">"ok"</span>,
+  <span class="s">"history"</span>: [...]
+}</pre>
+      <p style="font-size: 13px; color: var(--ink-soft); margin-top: 10px;">
+        所有一次性消息都带一个 <code>action</code> 字段。background 里有个大 switch（在 <code>handleRuntimeMessage</code> 里）按 action 分发到具体函数。
+      </p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">Port 消息约定</h3>
+      <pre class="snippet" style="margin: 0;"><span class="c">// content → background：</span>
+{
+  <span class="s">"action"</span>: <span class="s">"startGeneration"</span>,
+  <span class="s">"tabId"</span>: <span class="n">42</span>,
+  <span class="s">"question"</span>: <span class="s">"..."</span>
+}
+
+<span class="c">// background → content（多次）：</span>
+{ <span class="s">"type"</span>: <span class="s">"chunk"</span>, <span class="s">"text"</span>: <span class="s">"你好"</span> }
+{ <span class="s">"type"</span>: <span class="s">"chunk"</span>, <span class="s">"text"</span>: <span class="s">"世界"</span> }
+{ <span class="s">"type"</span>: <span class="s">"done"</span> }</pre>
+      <p style="font-size: 13px; color: var(--ink-soft); margin-top: 10px;">
+        Port 上来回的消息用 <code>type</code> 字段区分（chunk / done / error），因为这里不是"一问一答"，而是<strong>事件流</strong>。
+      </p>
+    </div>
+  </div>
+
+  <p>这套约定没有 TypeScript 类型保护，全靠开发者自律。<strong>项目代码里 <code>request.action === 'xxx'</code> 这种判断会出现几十次</strong>，加新功能的时候就是新增一个 action 加一个 case。</p>
+
+  <!-- ============ 3. 互动：消息怎么走 ============ -->
+  <h2><span class="num">3</span>互动：消息在两条信道上怎么走</h2>
+  <p class="lead">下面这个动画分别演示一次性消息和 Port 长连接的差别。同样是"传递信息"，节奏完全不同。</p>
+
+  <div class="pipe">
+    <div class="pipe-stage" id="pipeStage">
+      <div class="pipe-zone cs">
+        <div class="label">CONTENT (页面)</div>
+      </div>
+      <div class="pipe-zone bg">
+        <div class="label" style="text-align: right;">BACKGROUND (后台)</div>
+      </div>
+      <div class="bubble" id="bubble"></div>
+    </div>
+    <div class="pipe-controls">
+      <button class="primary" id="demoOneShot">▶ 一次性消息</button>
+      <button class="primary" id="demoPort">▶ Port 流式</button>
+      <button id="demoPipeReset">重置</button>
+    </div>
+    <div class="pipe-log" id="pipeLog">点击上方按钮播放对应的演示。</div>
+  </div>
+
+  <!-- ============ 4. 流式接力 ============ -->
+  <h2><span class="num">4</span>流式接力：从 SSE 到 DOM 的四级火箭</h2>
+  <p class="lead">"AI 边想边吐字"是怎么做到的？这个体验背后有<strong>四个独立段落</strong>串成的接力赛——每一段都跑在不同的进程里、用不同的方式传输。</p>
+
+  <div class="relay">
+    <div class="relay-row">
+      <div class="relay-num s1">1</div>
+      <div class="relay-body">
+        <h4>OpenAI / Claude → background</h4>
+        <p>请求带 <code>stream: true</code>，服务器以 <strong>SSE</strong> 协议返回。每一个 token 是一行 <code>data: {...}\n\n</code>。background 用 <code>response.body.getReader()</code> 读 chunk，<code>TextDecoder</code> 拼成完整行，逐行解析。</p>
+      </div>
+      <div class="relay-tag">SSE over HTTP</div>
+    </div>
+    <div class="relay-row">
+      <div class="relay-num s2">2</div>
+      <div class="relay-body">
+        <h4>background 内部 · 抽出文本片段</h4>
+        <p>不同 provider 的 SSE 字段各不相同（OpenAI 是 <code>choices[0].delta.content</code>，Anthropic 是 <code>delta.text</code>，Gemini 是 <code>candidates[0].content.parts[0].text</code>）。<code>processStreamLine(apiType, line)</code> 把这堆差异一次性收拢，统一吐出纯文本。</p>
+      </div>
+      <div class="relay-tag">processStreamLine()</div>
+    </div>
+    <div class="relay-row">
+      <div class="relay-num s3">3</div>
+      <div class="relay-body">
+        <h4>background → content · Port 推送</h4>
+        <p>每抽出一段文本，立刻 <code>port.postMessage({ type: 'chunk', text })</code>。这是一条已经建好的长连接，几乎零延迟。出错或结束时再发一条 <code>done</code> / <code>error</code>。</p>
+      </div>
+      <div class="relay-tag">port.postMessage()</div>
+    </div>
+    <div class="relay-row">
+      <div class="relay-num s4">4</div>
+      <div class="relay-body">
+        <h4>content → DOM · 渲染到聊天气泡</h4>
+        <p>content.js 监听 <code>port.onMessage</code>，每收一条 chunk 就把 text 累加到当前消息字符串里，重新走一次 Markdown 渲染，更新对应气泡的 <code>innerHTML</code>。打字机效果就是这样自然产生的。</p>
+      </div>
+      <div class="relay-tag">marked.parse() + DOM</div>
+    </div>
+  </div>
+
+  <h3>为什么必须是接力，不能直传？</h3>
+  <div class="card">
+    <p>有人会问：能不能让 content script 直接 fetch OpenAI？</p>
+    <p>答案是<strong>不能</strong>。两个原因：</p>
+    <ul>
+      <li><strong>跨域限制</strong>：content script 跑在网页所在域下，受 CORS 制约。第三方页面不会允许你给 <code>api.openai.com</code> 发请求。</li>
+      <li><strong>密钥泄露风险</strong>：API Key 一旦进入网页世界，理论上页面里的恶意脚本能嗅探它。所以密钥<strong>必须</strong>留在 background 这个隔离环境里。</li>
+    </ul>
+    <p>所以你看到了一种典型的"分布式系统"小型化版本：每段只能在最适合它的环境跑，跨段必须接力。</p>
+  </div>
+
+  <!-- ============ 5. LLM 适配 ============ -->
+  <h2><span class="num">5</span>LLM 适配层：把 5 套不同 API 包成一套</h2>
+  <p class="lead">本项目支持 OpenAI Chat / OpenAI Responses / Anthropic / Gemini / Ollama 五种接口。它们的 URL、请求体、流格式、鉴权方式<strong>没有一处相同</strong>。background 用了一套小型适配层把它们抹平。</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>URL 形态</th>
+        <th>鉴权方式</th>
+        <th>请求体的 messages 字段</th>
+        <th>流式增量字段</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="pill openai">OpenAI Chat</span></td>
+        <td class="mono">/v1/chat/completions</td>
+        <td class="mono">Authorization: Bearer</td>
+        <td class="mono">[{role, content}]</td>
+        <td class="mono">choices[0].delta.content</td>
+      </tr>
+      <tr>
+        <td><span class="pill responses">OpenAI Responses</span></td>
+        <td class="mono">/v1/responses</td>
+        <td class="mono">Authorization: Bearer</td>
+        <td class="mono">input: [...] + instructions</td>
+        <td class="mono">delta.text (event 流)</td>
+      </tr>
+      <tr>
+        <td><span class="pill claude">Anthropic</span></td>
+        <td class="mono">/v1/messages</td>
+        <td class="mono">x-api-key + anthropic-version</td>
+        <td class="mono">system 单独 / messages</td>
+        <td class="mono">delta.text (多事件)</td>
+      </tr>
+      <tr>
+        <td><span class="pill gemini">Gemini</span></td>
+        <td class="mono">?key=xxx (URL 参数)</td>
+        <td class="mono">URL 里的 key=</td>
+        <td class="mono">contents: [{role, parts}]</td>
+        <td class="mono">candidates[0].content...</td>
+      </tr>
+      <tr>
+        <td><span class="pill ollama">Ollama</span></td>
+        <td class="mono">/api/chat</td>
+        <td class="mono">无（本机）</td>
+        <td class="mono">[{role, content}]</td>
+        <td class="mono">message.content (NDJSON)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>抹平靠的是几个分发函数</h3>
+  <div class="card">
+    <p>项目里有一组对称的"按 apiType 分支"的小函数。它们形成一条很清晰的处理链：</p>
+    <ul>
+      <li><code>buildEndpointUrl(apiType, ...)</code> — 拼出最终请求 URL（Gemini 的 key 要塞进 query）</li>
+      <li><code>buildRequestBody(apiType, ...)</code> — 决定调用 <code>buildAnthropicBody</code> / <code>buildGeminiBody</code> / <code>buildResponsesBody</code> 哪一个</li>
+      <li><code>buildRequestHeaders(apiType, ...)</code> — Bearer 还是 x-api-key</li>
+      <li><code>processStreamLine(apiType, ...)</code> — 解析流式增量</li>
+    </ul>
+    <p>调用 LLM 的主函数 <code>handleAnswerGeneration</code> 完全不知道下面是哪家——它只调这几个函数。<strong>这就是适配器模式（Adapter Pattern）的最朴素实现</strong>，没有 class、没有 interface，纯粹靠"按字符串分支的函数族"。</p>
+  </div>
+
+  <!-- ============ 6. 跨域抓取 ============ -->
+  <h2><span class="num">6</span>跨域抓取的旅行：B 站字幕怎么落到 prompt 里</h2>
+  <p class="lead">你在 B 站看视频，扩展能拿到字幕——这件事比看起来复杂得多。它揭示了"为什么 background 是扩展的网络出口"。</p>
+
+  <div class="bili-flow">
+    <div class="bili-step">
+      <div class="n">1</div>
+      <div class="body">
+        <h4>content script 检测到这是 B 站视频页</h4>
+        <p>从 URL 里解析出 <code>BV</code> 号，从 DOM 里抓到 <code>cid</code>（分集 ID）。这一步必须在 content script 里——只有它能读 DOM。</p>
+      </div>
+    </div>
+    <div class="bili-step">
+      <div class="n">2</div>
+      <div class="body">
+        <h4>content 想去问 B 站的字幕接口</h4>
+        <p>它会想 fetch <code>api.bilibili.com/x/player/wbi/v2?bvid=...</code>。但这个请求<strong>跨域</strong>——content script 在 <code>www.bilibili.com</code> 上，调 <code>api.bilibili.com</code> 子域时浏览器会要求 CORS 头，B 站不一定给。</p>
+      </div>
+    </div>
+    <div class="bili-step">
+      <div class="n">3</div>
+      <div class="body">
+        <h4>content 通过消息把请求转给 background</h4>
+        <p>看 <code>shared/videoContext.js</code> 里的 <code>fetchTextViaBackground(url, 'include')</code>。它实际上发了一条 <code>{ action: 'fetchText', url, credentials }</code> 的一次性消息给 background。</p>
+      </div>
+    </div>
+    <div class="bili-step">
+      <div class="n">4</div>
+      <div class="body">
+        <h4>background 替它去发请求</h4>
+        <p>background 在 manifest 声明了 <code>host_permissions: ["&lt;all_urls&gt;"]</code>，不受 CORS 限制（扩展的特权）。它带着用户的 cookie（<code>credentials: 'include'</code>）拿到字幕 JSON，原样回包给 content。</p>
+      </div>
+    </div>
+    <div class="bili-step">
+      <div class="n">5</div>
+      <div class="body">
+        <h4>content 解析字幕，拼进 prompt</h4>
+        <p>JSON 解析后拿到时间戳 + 文本数组，按顺序拼成 Markdown 形式的对话上下文，作为下一轮提问的 page content。</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="pull"><strong>结论：扩展里所有跨域请求都得 background 出面。</strong>这不仅是字幕，PDF 远程下载、图片抓取、模型 API 调用，全都遵守这条规则。</p>
+
+  <h3>为什么不让 content 自己 fetch？</h3>
+  <div class="card">
+    <p>这背后有一个微妙但关键的细节：<strong>扩展在 manifest 里声明的 host_permissions 给的是 background 的特权，不是 content script 的</strong>。</p>
+    <p>Content script 的代码虽然由扩展注入，但它的"网络身份"仍然是宿主网页的——浏览器不会因为它来自扩展就放行 CORS。所以哪怕你在 manifest 里写了 <code>&lt;all_urls&gt;</code>，content script 直接 fetch 跨域接口大概率还是失败。</p>
+    <p>这是一个新手非常容易踩的坑，也是项目里 <code>fetchTextViaBackground</code> 这种代理函数存在的根本原因。</p>
+  </div>
+
+  <!-- ============ 7. 网页正文抽取 ============ -->
+  <h2><span class="num">7</span>网页正文抽取：把 DOM 翻译成 Markdown</h2>
+  <p class="lead">用户在新闻页面问"这篇文章在讲什么"，扩展要先把整页正文塞进 prompt。但<strong>原始 DOM 太脏了</strong>——导航栏、广告、评论区、隐藏元素全在里面。这一步是 content.js 的硬功夫。</p>
+
+  <div class="grid-2">
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">挑战在哪</h3>
+      <ul style="font-size: 14px;">
+        <li>页面结构千奇百怪：有的有 <code>&lt;article&gt;</code>，有的全是 <code>&lt;div class="post"&gt;</code></li>
+        <li>同样一段文字，不同标签语义不同：<code>&lt;pre&gt;</code> 要保留缩进、<code>&lt;li&gt;</code> 要变成 Markdown 列表</li>
+        <li>不能简单 <code>document.body.innerText</code>——会把导航、页脚、广告全卷进来</li>
+        <li>有些元素 <code>display: none</code>，但 innerText 不会管</li>
+      </ul>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">本项目的策略</h3>
+      <ol style="font-size: 14px; padding-left: 18px;">
+        <li>找一个"主内容容器"：先试 <code>&lt;article&gt;</code> / <code>&lt;main&gt;</code>，找不到就退化到 <code>document.body</code></li>
+        <li>深度遍历，按标签类型分类处理（<code>BLOCK_TAGS</code> 集合定义了块级元素）</li>
+        <li><code>&lt;pre&gt;</code> / <code>&lt;code&gt;</code> 完整保留缩进，包 <code>```</code> 围栏</li>
+        <li><code>&lt;h1-6&gt;</code> 转成 Markdown <code>#</code> 标题，<code>&lt;li&gt;</code> 转成 <code>-</code> 列表项</li>
+        <li>跳过隐藏节点和明显的"非正文"标签（script / style / nav / footer）</li>
+      </ol>
+    </div>
+  </div>
+
+  <p style="font-size: 14px;">这种做法没有用 Mozilla Readability 那种重型库，而是<strong>手写一个简化版</strong>。优点是体积小、可控；缺点是个别奇葩页面会抽到杂质。这是个工程权衡问题，不是技术对错问题。</p>
+
+  <!-- ============ 8. PDF 抽取 ============ -->
+  <h2><span class="num">8</span>PDF 抽取：浏览器内置阅读器的特殊路径</h2>
+  <p class="lead">PDF 是个特别的存在。Chrome 内置了 PDF 阅读器，但<strong>它对扩展几乎是黑盒</strong>——你 querySelector 啥也找不到。</p>
+
+  <div class="pdf-path">
+    <h3 style="margin-top: 0;">Chrome 打开 PDF 时发生了什么</h3>
+    <p style="font-size: 13px; margin: 0;">浏览器其实是渲染了一个特殊的 viewer 页面，里面套了个 <code>&lt;embed type="application/pdf"&gt;</code>。embed 内部的 PDF 内容由 Chrome 用单独的进程渲染——content script 注入到外层页面，但<strong>看不到 embed 内部的文本</strong>。所以用普通的 DOM 抽取根本拿不到字。</p>
+    <div class="pdf-grid">
+      <div class="pdf-side">
+        <h5>不行的做法 ✗</h5>
+        <p><code>document.body.innerText</code> 只能拿到"PDF 文件" 这几个字，因为字本身在 embed 里。</p>
+      </div>
+      <div class="pdf-arrow">⇒</div>
+      <div class="pdf-side">
+        <h5>本项目的做法 ✓</h5>
+        <p>检测到是 PDF 页 → 让 background 重新 <code>fetch(location.href)</code> 拿原始字节 → 用打包进扩展的 <code>pdf.js</code> 在 worker 里解析每一页文本 → 拼成 Markdown 回到 content script。</p>
+      </div>
+    </div>
+  </div>
+
+  <h3>这条路径上的几个细节</h3>
+  <div class="card">
+    <ul>
+      <li><strong>识别 PDF 页</strong>：三层判断——<code>document.contentType === 'application/pdf'</code>、URL 以 <code>.pdf</code> 结尾、或者 DOM 里有 <code>&lt;embed type="application/pdf"&gt;</code>。任何一条命中就走 PDF 路径。</li>
+      <li><strong>为什么由 background 取字节</strong>：和 B 站字幕同理，content script 跨域受限。background 取到二进制后转成 base64 回包（消息通道里只能传可序列化的值，不能传 ArrayBuffer）。</li>
+      <li><strong>pdf.js 用 worker</strong>：解析大 PDF 是 CPU 密集的，必须放 Web Worker 里跑，不然会卡住整个扩展面板。worker 文件路径用 <code>chrome.runtime.getURL('lib/pdf.worker.min.js')</code> 拿到——这是 web_accessible_resources 必须声明的原因。</li>
+      <li><strong>缓存</strong>：同一个 URL 半小时内不重复解析。PDF 解析比较贵，缓存收益明显。</li>
+    </ul>
+  </div>
+
+  <!-- ============ 9. Slash 指令 ============ -->
+  <h2><span class="num">9</span>Slash 指令：一行 / 触发的小宇宙</h2>
+  <p class="lead">你在输入框打 <code>/</code>，弹出一个候选列表，选中后自动填入预设的提示词。这是个看着小、设计上有意思的小功能。</p>
+
+  <div class="slash-mock">
+    <div class="slash-input"><span style="color: #fde68a;">/</span><span style="color: #fff;">summ</span><span class="cursor"></span></div>
+    <div class="slash-list">
+      <div class="slash-item active">
+        <span class="cmd">/summarize</span>
+        <span class="desc">五条要点总结</span>
+      </div>
+      <div class="slash-item">
+        <span class="cmd">/summary</span>
+        <span class="desc">（用户自定义）</span>
+      </div>
+    </div>
+  </div>
+
+  <h3>这套机制的三个有意思的点</h3>
+  <div class="grid-3">
+    <div class="card" style="margin: 0;">
+      <h4 style="margin-top: 0;">① 共享定义</h4>
+      <p style="font-size: 13px;">指令模板放在 <code>shared/slashCommands.js</code>，三个世界共用一份。新增内置指令只要改这一个文件。</p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h4 style="margin-top: 0;">② 用户可改</h4>
+      <p style="font-size: 13px;">用户在 options 页能增删改自定义指令，存到 <code>chrome.storage.sync.slashCommands</code>。<code>normalizeSlashCommands</code> 做了校验：去重、过滤非法字符、忽略空 prompt。</p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h4 style="margin-top: 0;">③ 平滑升级</h4>
+      <p style="font-size: 13px;"><code>mergeNewDefaultSlashCommands</code> 解决一个细节：版本升级新增内置指令时，老用户原本保存的列表里没有它——这个函数把白名单里的内置指令补回去，又不覆盖用户自己改过的。</p>
+    </div>
+  </div>
+
+  <h3>触发流程</h3>
+  <div class="bili-flow">
+    <div class="bili-step">
+      <div class="n">1</div>
+      <div class="body">
+        <h4>用户在输入框打字</h4>
+        <p>content.js 监听输入框 <code>input</code> 事件。每次值变化都正则匹配 <code>/^\/([\w-]*)$/</code>。</p>
+      </div>
+    </div>
+    <div class="bili-step">
+      <div class="n">2</div>
+      <div class="body">
+        <h4>匹配上就拉出候选列表</h4>
+        <p>对当前所有指令做 prefix 过滤，按命中度排序，渲染成弹层。<code>autoSubmit</code> 标记的指令选中后会立刻发送，不需要用户再按回车。</p>
+      </div>
+    </div>
+    <div class="bili-step">
+      <div class="n">3</div>
+      <div class="body">
+        <h4>选中后替换输入框内容</h4>
+        <p>把 <code>/xxx</code> 替换成对应的 prompt 全文，光标移到末尾。后续走的就是普通的"问答"流程，跟你直接打字没区别。</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="pull">Slash 指令本质上是<strong>客户端层面的 prompt 模板系统</strong>。它不需要后端、不依赖模型、不增加上下文成本——纯前端字符串替换，但显著降低了用户用扩展的认知负担。</p>
+
+  <!-- ============ 10. 自测 ============ -->
+  <h2><span class="num">10</span>自测：你能区分这些场景吗</h2>
+  <p class="lead">每题选完会立即显示结果。第二层的核心是"理解通信背后的设计选择"。</p>
+
+  <div class="quiz" id="quiz">
+
+    <div class="qbox" data-correct="1">
+      <div class="q"><span class="qn">Q1</span><span>下列哪种场景<strong>最适合</strong>用 Port 长连接而不是 sendMessage？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">读取一次 chrome.storage</div>
+        <div class="opt" data-i="1">流式接收 LLM 的逐字输出</div>
+        <div class="opt" data-i="2">查询当前 tabId</div>
+        <div class="opt" data-i="3">告诉后台"切换到视频模式"</div>
+      </div>
+      <div class="answer">流式输出需要服务端持续推送多条消息，且用户可能中途取消，正是 Port 的典型场景。</div>
+    </div>
+
+    <div class="qbox" data-correct="3">
+      <div class="q"><span class="qn">Q2</span><span>content script 想 fetch B 站字幕接口，结果浏览器报 CORS 错误。最合适的解决办法是？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">在 manifest 里加 <code>"cors": true</code></div>
+        <div class="opt" data-i="1">让用户去关闭浏览器的 CORS 检查</div>
+        <div class="opt" data-i="2">把 fetch 改成 XMLHttpRequest</div>
+        <div class="opt" data-i="3">让 background 代为发请求，再把结果转回 content</div>
+      </div>
+      <div class="answer">Content script 不享有 host_permissions 的特权，跨域请求必须由 background 代发——这就是 <code>fetchTextViaBackground</code> 存在的原因。</div>
+    </div>
+
+    <div class="qbox" data-correct="2">
+      <div class="q"><span class="qn">Q3</span><span>OpenAI 的 SSE 流里，每个 token 增量在 JSON 的哪个字段？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">message.content</div>
+        <div class="opt" data-i="1">delta.text</div>
+        <div class="opt" data-i="2">choices[0].delta.content</div>
+        <div class="opt" data-i="3">candidates[0].content.parts[0].text</div>
+      </div>
+      <div class="answer">这是 OpenAI Chat Completions 的标准格式。其余三个分别是 Ollama、Anthropic、Gemini 的字段。</div>
+    </div>
+
+    <div class="qbox" data-correct="0">
+      <div class="q"><span class="qn">Q4</span><span>用户打开一个 PDF 文件，扩展为什么不能直接 <code>document.body.innerText</code> 拿文本？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">PDF 内容渲染在 <code>&lt;embed&gt;</code> 内部，content script 看不到</div>
+        <div class="opt" data-i="1">innerText 在 PDF 上被禁用了</div>
+        <div class="opt" data-i="2">浏览器给 PDF 加密了文本</div>
+        <div class="opt" data-i="3">需要先获得用户同意</div>
+      </div>
+      <div class="answer">Chrome 用一个独立的渲染进程画 PDF 内容，content script 注入的是外层 viewer，根本看不到 embed 里的文本节点。所以必须用 pdf.js 重新解析二进制。</div>
+    </div>
+
+    <div class="qbox" data-correct="2">
+      <div class="q"><span class="qn">Q5</span><span>项目里 Slash 指令模板的定义放在 <code>shared/slashCommands.js</code> 里。这样做最重要的理由是？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">让指令加载更快</div>
+        <div class="opt" data-i="1">方便用户修改</div>
+        <div class="opt" data-i="2">避免 background / content / popup 三处各写一份导致漂移</div>
+        <div class="opt" data-i="3">为了 SEO</div>
+      </div>
+      <div class="answer">三个世界都需要这份定义（content 触发、popup 显示、background 保存）。如果各写一份，加新指令时极易忘记同步——这是 shared/ 文件夹存在的根本目的。</div>
+    </div>
+
+    <div class="qbox" data-correct="1">
+      <div class="q"><span class="qn">Q6</span><span>API Key 应该存放在哪里、由谁使用？</span></div>
+      <div class="options">
+        <div class="opt" data-i="0">写死在 manifest.json 里</div>
+        <div class="opt" data-i="1">存在 chrome.storage，只在 background 里使用</div>
+        <div class="opt" data-i="2">存在 chrome.storage，content 和 background 都可以读</div>
+        <div class="opt" data-i="3">放在网页的 localStorage 里</div>
+      </div>
+      <div class="answer">存进 chrome.storage 是必须的，但更关键的是<strong>只在 background 用</strong>。一旦让 content 拿到，理论上可能被宿主网页里的恶意脚本嗅探。</div>
+    </div>
+
+  </div>
+
+  <hr />
+
+  <h2 style="margin-top: 0;">下一层会讲什么</h2>
+  <div class="grid-3">
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第三层 · 状态机</h3>
+      <p>每个标签页的会话状态怎么组织？service worker 死而复生时哪些字段会丢？多 tab 并发会话怎么互不干扰？为什么有 <code>sessions</code> 和 <code>archives</code> 两套存储？</p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第四层 · 上下文构造</h3>
+      <p>一次请求最终送给 LLM 的 messages 是怎么拼出来的？preamble 是什么？mentor flavor 怎么影响 system prompt？图像怎么编码？skill 模板如何叠加？</p>
+    </div>
+    <div class="card" style="margin: 0;">
+      <h3 style="margin-top: 0;">第五层 · 本地桥接</h3>
+      <p>Python 那个 426 行的小服务到底干了什么？为什么不用 chrome.downloads？日志归档的目录结构是怎么设计的？跨平台路径怎么处理？</p>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>PageLens AI · 框架结构 · 第二层 · 通信协议</span>
+    <span>diagrams/architecture-level-2.html</span>
+  </div>
+
+</div>
+
+<script>
+  // ===== 通信演示 =====
+  const stage = document.getElementById('pipeStage');
+  const bubble = document.getElementById('bubble');
+  const log = document.getElementById('pipeLog');
+
+  function logLine(text, color) {
+    const div = document.createElement('div');
+    div.className = 'line';
+    div.textContent = '› ' + text;
+    if (color) div.style.color = color;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+  function clearLog() { log.innerHTML = ''; }
+
+  function setBubble(text, leftPct, color) {
+    bubble.style.transition = 'left 0.6s cubic-bezier(0.65,0,0.35,1), opacity 0.3s';
+    bubble.style.left = leftPct;
+    bubble.style.background = color || 'var(--warn)';
+    bubble.textContent = text;
+    bubble.style.opacity = '1';
+    bubble.style.top = '50%';
+    bubble.style.transform = 'translate(-50%, -50%)';
+  }
+  function hideBubble() { bubble.style.opacity = '0'; }
+
+  function reset() {
+    clearLog();
+    hideBubble();
+    log.textContent = '已重置';
+  }
+
+  document.getElementById('demoOneShot').addEventListener('click', async () => {
+    clearLog();
+    logLine('content: chrome.runtime.sendMessage({ action: "getHistory" })', '#2563eb');
+    setBubble('getHistory ▶', '25%', '#2563eb');
+    await new Promise(r => setTimeout(r, 800));
+    setBubble('getHistory ▶', '75%', '#2563eb');
+    logLine('background: 收到、查 storage、返回 [...]', '#1a1a1a');
+    await new Promise(r => setTimeout(r, 1000));
+    setBubble('◀ {history:[...]}', '25%', '#059669');
+    logLine('content: 回包到达，渲染历史', '#059669');
+    await new Promise(r => setTimeout(r, 800));
+    hideBubble();
+    logLine('—— 一次性消息结束（一发一收，通道关闭）', '#8a8a8a');
+  });
+
+  document.getElementById('demoPort').addEventListener('click', async () => {
+    clearLog();
+    logLine('content: const port = chrome.runtime.connect({ name: "answerStream" })', '#db2777');
+    setBubble('▬ 建立长连接 ▬', '50%', '#db2777');
+    await new Promise(r => setTimeout(r, 700));
+    logLine('content: port.postMessage({ action: "startGeneration", question: "..." })', '#db2777');
+    setBubble('startGen ▶', '25%', '#2563eb');
+    await new Promise(r => setTimeout(r, 600));
+    setBubble('startGen ▶', '75%', '#2563eb');
+    logLine('background: 调 OpenAI（stream:true），开始接收 SSE', '#1a1a1a');
+    await new Promise(r => setTimeout(r, 600));
+
+    // 多次推送 chunk
+    const chunks = ['"你"', '"好"', '"，"', '"我"', '"在"', '"。"'];
+    for (let i = 0; i < chunks.length; i++) {
+      setBubble('◀ chunk: ' + chunks[i], '25%', '#ea580c');
+      logLine('background → content: { type: "chunk", text: ' + chunks[i] + ' }', '#ea580c');
+      await new Promise(r => setTimeout(r, 450));
+    }
+    setBubble('◀ done', '25%', '#059669');
+    logLine('background → content: { type: "done" }', '#059669');
+    await new Promise(r => setTimeout(r, 700));
+    hideBubble();
+    logLine('—— 流结束，连接可继续保持，等待下一轮', '#8a8a8a');
+  });
+
+  document.getElementById('demoPipeReset').addEventListener('click', reset);
+
+  // ===== 自测交互 =====
+  document.querySelectorAll('.qbox').forEach(box => {
+    const correct = parseInt(box.dataset.correct);
+    box.querySelectorAll('.opt').forEach(opt => {
+      opt.addEventListener('click', () => {
+        if (box.classList.contains('answered')) return;
+        const i = parseInt(opt.dataset.i);
+        if (i === correct) {
+          opt.classList.add('correct');
+        } else {
+          opt.classList.add('wrong');
+          box.querySelector(`.opt[data-i="${correct}"]`).classList.add('correct');
+        }
+        box.classList.add('answered');
+      });
+    });
+  });
+</script>
+</body>
+</html>

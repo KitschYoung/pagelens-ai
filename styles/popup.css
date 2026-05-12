@@ -351,6 +351,111 @@ body .mentor-item-hint {
     white-space: normal;
 }
 
+/* Skill 选择器：复用 mentor 样式 */
+body .skill-toggle-wrap {
+    position: relative;
+    display: inline-flex;
+}
+
+body .panel-skill {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #666;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s, color 0.15s;
+}
+
+body .panel-skill:hover {
+    background: #eef2f7;
+    color: #111;
+}
+
+body .panel-skill.active {
+    background: linear-gradient(135deg, #fbe8ff, #f0dcff);
+    color: #6b21a8;
+    border-color: #d8b4fe;
+}
+
+body .skill-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 30;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    padding: 6px;
+    width: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+body .skill-popover[hidden] {
+    display: none;
+}
+
+body .skill-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    color: #374151;
+    font: inherit;
+}
+
+body .skill-item:hover {
+    background: #f5f3ff;
+}
+
+body .skill-item.active {
+    background: #f3e8ff;
+    color: #6b21a8;
+}
+
+body .skill-item-icon {
+    font-size: 16px;
+    line-height: 1.2;
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+}
+
+body .skill-item-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+body .skill-item-label {
+    font-weight: 600;
+    font-size: 12.5px;
+}
+
+body .skill-item-hint {
+    font-size: 11.5px;
+    color: #6b7280;
+    line-height: 1.35;
+    white-space: normal;
+}
+
 body .session-mode-bar {
     padding: 10px 14px 8px;
     border-bottom: 1px solid #f0f0f0;

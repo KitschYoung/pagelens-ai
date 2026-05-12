@@ -94,6 +94,110 @@ html.ai-assistant-panel-open .ball-container {
     transition: opacity 0.15s ease !important;
 }
 
+html.ai-assistant-panel-open #webchat-focus-bubble {
+    display: none !important;
+}
+
+#webchat-focus-bubble {
+    position: fixed !important;
+    z-index: 2147483646 !important;
+    width: 230px !important;
+    max-width: calc(100vw - 16px) !important;
+    padding: 8px 30px 8px 10px !important;
+    background: #ffffff !important;
+    border: 1px solid #f5b5cc !important;
+    border-radius: 8px !important;
+    box-shadow: 0 10px 26px rgba(42, 28, 36, 0.16), 0 2px 8px rgba(244, 111, 159, 0.18) !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif !important;
+    box-sizing: border-box !important;
+    pointer-events: auto !important;
+}
+
+#webchat-focus-bubble[hidden] {
+    display: none !important;
+}
+
+#webchat-focus-bubble::after {
+    content: "" !important;
+    position: absolute !important;
+    width: 10px !important;
+    height: 10px !important;
+    background: #ffffff !important;
+    border: 1px solid #f5b5cc !important;
+    transform: rotate(45deg) !important;
+}
+
+#webchat-focus-bubble[data-placement="left"]::after {
+    right: -6px !important;
+    top: calc(50% - 5px) !important;
+    border-left: none !important;
+    border-bottom: none !important;
+}
+
+#webchat-focus-bubble[data-placement="right"]::after {
+    left: -6px !important;
+    top: calc(50% - 5px) !important;
+    border-right: none !important;
+    border-top: none !important;
+}
+
+#webchat-focus-bubble[data-placement="top"]::after {
+    right: 22px !important;
+    bottom: -6px !important;
+    border-left: none !important;
+    border-top: none !important;
+}
+
+#webchat-focus-bubble[data-placement="bottom"]::after {
+    right: 22px !important;
+    top: -6px !important;
+    border-right: none !important;
+    border-bottom: none !important;
+}
+
+#webchat-focus-bubble .focus-bubble-question {
+    display: block !important;
+    width: 100% !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    color: #3f2630 !important;
+    font-size: 12.5px !important;
+    line-height: 1.38 !important;
+    text-align: left !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    cursor: pointer !important;
+    font-family: inherit !important;
+}
+
+#webchat-focus-bubble .focus-bubble-question:hover {
+    color: #c23872 !important;
+}
+
+#webchat-focus-bubble .focus-bubble-close {
+    position: absolute !important;
+    right: 8px !important;
+    top: 7px !important;
+    width: 20px !important;
+    height: 20px !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 50% !important;
+    background: #f8edf2 !important;
+    color: #9f4268 !important;
+    font-size: 14px !important;
+    line-height: 20px !important;
+    text-align: center !important;
+    cursor: pointer !important;
+    font-family: inherit !important;
+}
+
+#webchat-focus-bubble .focus-bubble-close:hover {
+    background: #f3d7e2 !important;
+    color: #7b2448 !important;
+}
+
 /* 复制原有的popup.css中的样式，但修改选择器 */
 #ai-assistant-dialog .container {
     display: flex;
@@ -265,14 +369,67 @@ html.ai-assistant-panel-open .ball-container {
 #ai-assistant-dialog .assistant-message pre {
     background-color: #f6f8fa;
     padding: 12px;
+    padding-top: 30px;
     border-radius: 6px;
     overflow-x: auto;
     margin: 0.5em 0;
+    position: relative;
 }
 
 #ai-assistant-dialog .assistant-message pre code {
     background-color: transparent;
     padding: 0;
+}
+
+/* 代码块工具条：复制 + 下载（hover 时高亮） */
+#ai-assistant-dialog .assistant-message pre .code-toolbar,
+#ai-assistant-dialog .user-message pre .code-toolbar {
+    position: absolute !important;
+    top: 6px !important;
+    right: 6px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    z-index: 2 !important;
+    opacity: 0.55;
+    transition: opacity 0.15s ease;
+}
+
+#ai-assistant-dialog pre:hover .code-toolbar {
+    opacity: 1 !important;
+}
+
+#ai-assistant-dialog .code-toolbar-lang {
+    font-size: 11px !important;
+    color: #6b7280 !important;
+    padding: 2px 6px !important;
+    background: rgba(255, 255, 255, 0.7) !important;
+    border-radius: 4px !important;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace !important;
+    user-select: none !important;
+}
+
+#ai-assistant-dialog .code-toolbar-btn {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+    padding: 3px 8px !important;
+    background: #fff !important;
+    color: #374151 !important;
+    border: 1px solid #d1d5db !important;
+    border-radius: 4px !important;
+    cursor: pointer !important;
+    font-family: inherit !important;
+    transition: background 0.12s, color 0.12s, border-color 0.12s !important;
+}
+
+#ai-assistant-dialog .code-toolbar-btn:hover {
+    background: #eef2ff !important;
+    color: #1d4ed8 !important;
+    border-color: #c9d7ff !important;
+}
+
+#ai-assistant-dialog .code-toolbar-btn:active {
+    background: #e0e7ff !important;
 }
 
 #ai-assistant-dialog .assistant-message ul,
@@ -962,6 +1119,7 @@ html.ai-assistant-panel-open .ball-container {
 #ai-assistant-dialog .panel-close,
 #ai-assistant-dialog .panel-clear,
 #ai-assistant-dialog .panel-mentor,
+#ai-assistant-dialog .panel-skill,
 #ai-assistant-dialog .panel-annotate,
 #ai-assistant-dialog .panel-page-content,
 #ai-assistant-dialog .panel-context-dump,
@@ -989,6 +1147,7 @@ html.ai-assistant-panel-open .ball-container {
 #ai-assistant-dialog .panel-close:hover,
 #ai-assistant-dialog .panel-clear:hover,
 #ai-assistant-dialog .panel-mentor:hover,
+#ai-assistant-dialog .panel-skill:hover,
 #ai-assistant-dialog .panel-annotate:hover,
 #ai-assistant-dialog .panel-page-content:hover,
 #ai-assistant-dialog .panel-history:hover,
@@ -1262,6 +1421,89 @@ webchat-hl:hover {
 }
 
 #ai-assistant-dialog .mentor-item-hint {
+    font-size: 12px !important;
+    color: #6b7280 !important;
+    line-height: 1.35 !important;
+    white-space: normal !important;
+}
+
+/* Skill 选择器：复用 mentor 视觉，紫色 accent */
+#ai-assistant-dialog .skill-toggle-wrap {
+    position: relative !important;
+    display: inline-flex !important;
+}
+
+#ai-assistant-dialog .panel-skill.active {
+    background: linear-gradient(135deg, #fbe8ff, #f0dcff) !important;
+    color: #6b21a8 !important;
+    box-shadow: 0 0 0 1px #d8b4fe inset !important;
+}
+
+#ai-assistant-dialog .skill-popover {
+    position: absolute !important;
+    top: calc(100% + 6px) !important;
+    left: 0 !important;
+    z-index: 2147483647 !important;
+    background: #fff !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 10px !important;
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18) !important;
+    padding: 6px !important;
+    width: 280px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+}
+
+#ai-assistant-dialog .skill-popover[hidden] {
+    display: none !important;
+}
+
+#ai-assistant-dialog .skill-item {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+    padding: 8px 10px !important;
+    border: none !important;
+    background: transparent !important;
+    border-radius: 6px !important;
+    cursor: pointer !important;
+    text-align: left !important;
+    width: 100% !important;
+    color: #374151 !important;
+    font: inherit !important;
+}
+
+#ai-assistant-dialog .skill-item:hover {
+    background: #f5f3ff !important;
+}
+
+#ai-assistant-dialog .skill-item.active {
+    background: #f3e8ff !important;
+    color: #6b21a8 !important;
+}
+
+#ai-assistant-dialog .skill-item-icon {
+    font-size: 16px !important;
+    line-height: 1.2 !important;
+    flex-shrink: 0 !important;
+    width: 20px !important;
+    text-align: center !important;
+}
+
+#ai-assistant-dialog .skill-item-main {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+    min-width: 0 !important;
+}
+
+#ai-assistant-dialog .skill-item-label {
+    font-weight: 600 !important;
+    font-size: 13px !important;
+}
+
+#ai-assistant-dialog .skill-item-hint {
     font-size: 12px !important;
     color: #6b7280 !important;
     line-height: 1.35 !important;

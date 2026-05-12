@@ -7,6 +7,8 @@
     <script src="../lib/marked.min.js"></script>
     <script src="../shared/chatModes.js"></script>
     <script src="../shared/mentorModes.js"></script>
+    <script src="../shared/skills.js"></script>
+    <script src="../shared/skills/guizangPpt.js"></script>
     <script src="../shared/imageInput.js"></script>
 </head>
 
@@ -23,6 +25,10 @@
             <div class="mentor-toggle-wrap">
                 <button type="button" class="panel-mentor" id="mentorToggle" title="学习带教模式（苏格拉底式引导）" aria-pressed="false">🎓</button>
                 <div class="mentor-popover" id="mentorPopover" hidden role="menu" aria-label="选择带教风格"></div>
+            </div>
+            <div class="skill-toggle-wrap">
+                <button type="button" class="panel-skill" id="skillToggle" title="选择内置 Skill（特定任务的专家系统提示词）" aria-pressed="false">🪄</button>
+                <div class="skill-popover" id="skillPopover" hidden role="menu" aria-label="选择 Skill"></div>
             </div>
         </div>
         <div class="session-mode-bar">
