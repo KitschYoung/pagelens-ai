@@ -15,6 +15,23 @@ PageLens AI 是一个 Chrome Manifest V3 扩展，用侧边面板和悬浮球把
 - 支持自定义悬浮球图案
 - 支持通过本地桥接服务把会话保存为 Markdown 日志
 
+## 本地运行
+
+下面是 60 秒的快速上手；完整说明见下文 [安装](#安装)、[使用](#使用) 与 [开发](#开发) 三节。
+
+```bash
+# 1. 克隆代码
+git clone https://github.com/KitschYoung/pagelens-ai.git
+
+# 2. 在 Chrome 打开 chrome://extensions/，开启「开发者模式」
+#    点「加载已解压的扩展程序」→ 选 pagelens-ai 根目录
+
+# 3.（可选）启动本地会话日志桥，仅在需要把对话存成 Markdown 时运行
+python3 tools/session_log_bridge.py
+```
+
+之后刷新任意网页，按 `Ctrl+Shift+K`（Mac 上 `Cmd+Shift+K`）或点击悬浮球即可开始对话；首次使用前请在「扩展程序选项」里填写 API 类型、请求地址、模型和密钥。
+
 ## 安装
 
 1. 下载代码：`git clone https://github.com/KitschYoung/pagelens-ai.git`
